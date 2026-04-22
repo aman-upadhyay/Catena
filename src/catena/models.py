@@ -5,9 +5,9 @@ from __future__ import annotations
 import re
 from enum import Enum
 from pathlib import PurePosixPath, PureWindowsPath
-from typing import Any, Self
+from typing import Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator, field_validator
 
 JOB_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 SAFE_PATH_SEGMENT_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -122,7 +122,9 @@ class InputFile(CatenaModel):
     """File payload supplied with a job request."""
 
     name: str
-    content_b64: str
+    mode: Literal["inline", "uploaded", "server_path"] = "inline"
+    content_b64: str | None = None
+    path: str | None = None
 
     @field_validator("name")
     @classmethod
@@ -130,6 +132,54 @@ class InputFile(CatenaModel):
         """Ensure an input file name is a safe relative path."""
 
         return validate_safe_relative_name(value)
+
+    @field_validator("path")
+    @classmethod
+    def validate_path(cls, value: str | None) -> str | None:
+        """Ensure any server-side path is absolute when provided."""
+
+        if value is None:
+            return value
+        if not PurePosixPath(value).is_absolute() and not PureWindowsPath(value).is_absolute():
+            msg = "server_path inputs require an absolute path"
+            raise ValueError(msg)
+        return value
+
+    @model_validator(mode="before")
+    @classmethod
+    def apply_inline_compatibility(cls, data: Any) -> Any:
+        """Preserve legacy inline-file payloads when mode is omitted."""
+
+        if not isinstance(data, dict):
+            return data
+        if "mode" not in data and data.get("content_b64") is not None:
+            data = dict(data)
+            data["mode"] = "inline"
+        return data
+
+    @model_validator(mode="after")
+    def validate_mode_fields(self) -> Self:
+        """Validate the field requirements for each input mode."""
+
+        if self.mode == "inline":
+            if not self.content_b64:
+                msg = "inline inputs require content_b64"
+                raise ValueError(msg)
+            if self.path is not None:
+                msg = "inline inputs must not set path"
+                raise ValueError(msg)
+        elif self.mode == "uploaded":
+            if self.content_b64 is not None or self.path is not None:
+                msg = "uploaded inputs require only name"
+                raise ValueError(msg)
+        elif self.mode == "server_path":
+            if not self.path:
+                msg = "server_path inputs require path"
+                raise ValueError(msg)
+            if self.content_b64 is not None:
+                msg = "server_path inputs must not set content_b64"
+                raise ValueError(msg)
+        return self
 
 
 class JobRequest(CatenaModel):

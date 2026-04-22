@@ -198,7 +198,18 @@ def submit(request_path: str) -> None:
     try:
         job_request = load_request(request_path)
     except (FileNotFoundError, OSError, ValidationError, ValueError) as exc:
-        raise typer.BadParameter(str(exc), param_hint="request_path") from exc
+        error_job_id = "unknown-job"
+        if request_path != "-":
+            error_job_id = Path(request_path).stem or error_job_id
+        error_status = _build_status(
+            job_id=error_job_id,
+            state=JobState.UNKNOWN,
+            slurm_job_id=None,
+            job_dir=str(get_job_paths(error_job_id).job_dir) if error_job_id != "unknown-job" else "",
+            message=str(exc),
+        )
+        _emit_status(error_status)
+        raise typer.Exit(code=1) from exc
 
     job_paths = get_job_paths(job_request.job_id)
     if job_exists(job_request.job_id):
@@ -225,7 +236,18 @@ def submit(request_path: str) -> None:
         _emit_status(unsupported_status)
         raise typer.Exit(code=1)
 
-    create_job_layout(job_request)
+    try:
+        create_job_layout(job_request)
+    except (FileExistsError, FileNotFoundError, OSError, ValueError) as exc:
+        failed_status = _build_status(
+            job_id=job_request.job_id,
+            state=JobState.UNKNOWN,
+            slurm_job_id=None,
+            job_dir=str(job_paths.job_dir),
+            message=str(exc),
+        )
+        _emit_status(failed_status)
+        raise typer.Exit(code=1) from exc
     script_path = write_slurm_script(job_request.job_id, body)
     slurm_job_id, submit_error = submit_slurm_script(script_path)
 

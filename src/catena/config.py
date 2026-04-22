@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 BASE_JOB_DIR = "/scratch/au152/agent_job"
+BASE_STAGE_DIR = "/scratch/au152/catena_stage"
 
 SLURM_PARTITION = "main"
 SLURM_REQUEUE = True

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import shutil
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,7 +12,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 from pydantic import field_validator
 
-from catena.models import CatenaModel, JobRequest, JobState, validate_job_id
+from catena.models import CatenaModel, InputFile, JobRequest, JobState, validate_job_id
 from catena.paths import JobPaths, get_job_paths
 
 
@@ -39,6 +40,13 @@ def decode_input_file_content(content_b64: str) -> bytes:
     return base64.b64decode(content_b64, validate=True)
 
 
+def _copy_file(source: Path, destination: Path) -> None:
+    """Copy a file into the destination path, creating parent directories."""
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, destination)
+
+
 def _json_dumps(payload: dict[str, Any]) -> str:
     """Serialize a payload as readable JSON."""
 
@@ -59,13 +67,47 @@ def _touch_file(path: Path) -> None:
     path.touch(exist_ok=True)
 
 
+def resolve_input_file(input_file: InputFile, job_paths: JobPaths) -> None:
+    """Materialize one request input into the final job input directory."""
+
+    destination = job_paths.inputs_dir / input_file.name
+
+    if input_file.mode == "inline":
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(decode_input_file_content(input_file.content_b64 or ""))
+        return
+
+    if input_file.mode == "uploaded":
+        source = job_paths.stage_dir / input_file.name
+        if not source.exists():
+            msg = f"uploaded staged file missing: {input_file.name}"
+            raise FileNotFoundError(msg)
+        if not source.is_file():
+            msg = f"uploaded staged path is not a file: {input_file.name}"
+            raise FileNotFoundError(msg)
+        _copy_file(source, destination)
+        return
+
+    if input_file.mode == "server_path":
+        source = Path(input_file.path or "")
+        if not source.exists():
+            msg = f"server_path input missing: {source}"
+            raise FileNotFoundError(msg)
+        if not source.is_file():
+            msg = f"server_path input is not a file: {source}"
+            raise FileNotFoundError(msg)
+        _copy_file(source, destination)
+        return
+
+    msg = f"unsupported input mode: {input_file.mode}"
+    raise ValueError(msg)
+
+
 def _write_input_files(job_request: JobRequest, job_paths: JobPaths) -> None:
     """Materialize request input files under the job input directory."""
 
     for input_file in job_request.input_files:
-        destination = job_paths.inputs_dir / input_file.name
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_bytes(decode_input_file_content(input_file.content_b64))
+        resolve_input_file(input_file, job_paths)
 
 
 def _read_json_file(path: Path) -> dict[str, Any]:
