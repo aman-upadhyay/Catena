@@ -22,3 +22,7 @@ MG_ENV = "MG"
 DLPS_ENV = "DLPS"
 SRPA_ENV = "SRPA"
 CATENA_ENV = "Catena"
+
+REMOTE_HOST = "amarel.rutgers.edu"
+REMOTE_USER = "au152"
+REMOTE_SERVER_CMD = "catena-server"

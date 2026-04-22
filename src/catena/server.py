@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import typer
@@ -46,6 +47,8 @@ TERMINAL_STATES = {
 def load_request(path: str) -> JobRequest:
     """Load and validate a job request from a JSON file."""
 
+    if path == "-":
+        return JobRequest.from_json(sys.stdin.read())
     return JobRequest.from_json(Path(path).read_text(encoding="utf-8"))
 
 
