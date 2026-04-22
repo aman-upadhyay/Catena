@@ -165,6 +165,56 @@ def upload_files(host: str, user: str, job_id: str, files: list[str]) -> None:
     raise RuntimeError("neither rsync nor scp is available locally")
 
 
+def fetch_with_rsync(host: str, user: str, remote_path: str, local_path: Path) -> subprocess.CompletedProcess[str]:
+    """Fetch a remote file with rsync over SSH."""
+
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+    return subprocess.run(
+        ["rsync", "-av", "-e", "ssh", f"{user}@{host}:{remote_path}", str(local_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def fetch_with_scp(host: str, user: str, remote_path: str, local_path: Path) -> subprocess.CompletedProcess[str]:
+    """Fetch a remote file with scp as a fallback."""
+
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+    return subprocess.run(
+        ["scp", f"{user}@{host}:{remote_path}", str(local_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def fetch_file(host: str, user: str, remote_path: str, local_path: Path) -> None:
+    """Fetch a remote file locally with rsync or scp fallback."""
+
+    if shutil.which("rsync"):
+        result = fetch_with_rsync(host, user, remote_path, local_path)
+        if result.returncode == 0:
+            return
+        if shutil.which("scp"):
+            fallback = fetch_with_scp(host, user, remote_path, local_path)
+            if fallback.returncode == 0:
+                return
+            stderr = fallback.stderr.strip() or result.stderr.strip() or "scp fetch failed"
+            raise RuntimeError(stderr)
+        stderr = result.stderr.strip() or "rsync fetch failed"
+        raise RuntimeError(stderr)
+
+    if shutil.which("scp"):
+        result = fetch_with_scp(host, user, remote_path, local_path)
+        if result.returncode == 0:
+            return
+        stderr = result.stderr.strip() or "scp fetch failed"
+        raise RuntimeError(stderr)
+
+    raise RuntimeError("neither rsync nor scp is available locally")
+
+
 @app.command()
 def submit(
     request_path: str,
@@ -264,5 +314,52 @@ def upload(
             "uploaded_files": [Path(file).name for file in files],
             "remote_stage_dir": remote_stage_dir(job_id),
             "message": "upload completed",
+        }
+    )
+
+
+@app.command()
+def fetch(
+    job_id: str,
+    dest: str | None = typer.Option(None, "--dest", help="Local destination path for the fetched zip."),
+    host: str = typer.Option(config.REMOTE_HOST, "--host", help="Remote SSH host."),
+    user: str = typer.Option(config.REMOTE_USER, "--user", help="Remote SSH user."),
+) -> None:
+    """
+    Fetch a bundled Catena job archive from the remote server.
+    """
+
+    local_path = Path(dest) if dest is not None else Path.cwd() / f"{job_id}.zip"
+
+    try:
+        result = run_ssh_command(
+            host=host,
+            user=user,
+            remote_args=[config.REMOTE_SERVER_CMD, "bundle", job_id],
+        )
+        payload = handle_remote_result(result)
+        remote_zip_path = payload["zip_path"]
+        remote_job_id = payload["job_id"]
+        if not isinstance(remote_zip_path, str) or not isinstance(remote_job_id, str):
+            msg = "remote bundle response is missing job_id or zip_path"
+            raise ValueError(msg)
+        fetch_file(host, user, remote_zip_path, local_path)
+    except (KeyError, OSError, ValueError, RuntimeError) as exc:
+        emit_json(
+            {
+                "job_id": job_id,
+                "remote_zip_path": "",
+                "local_path": str(local_path),
+                "message": str(exc),
+            }
+        )
+        raise typer.Exit(code=1) from exc
+
+    emit_json(
+        {
+            "job_id": remote_job_id,
+            "remote_zip_path": remote_zip_path,
+            "local_path": str(local_path),
+            "message": "fetch completed",
         }
     )
