@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -10,7 +11,7 @@ from pydantic import ValidationError
 
 from catena.models import JobRequest, JobState, JobStatus
 from catena.paths import get_job_paths
-from catena.registry import create_job_layout, job_exists, read_state_json, write_state_json
+from catena.registry import create_job_bundle, create_job_layout, job_exists, read_state_json, write_state_json
 from catena.runners.python_run import build_python_slurm_body
 from catena.slurm import write_slurm_script
 
@@ -128,6 +129,22 @@ def _emit_status(status: JobStatus) -> None:
     """Print a machine-readable status document."""
 
     typer.echo(status.to_json(indent=2))
+
+
+def _emit_bundle_result(job_id: str, job_dir: str, zip_path: str, message: str | None) -> None:
+    """Print a machine-readable bundle result document."""
+
+    typer.echo(
+        json.dumps(
+            {
+                "job_id": job_id,
+                "job_dir": job_dir,
+                "zip_path": zip_path,
+                "message": message,
+            },
+            indent=2,
+        )
+    )
 
 
 def _build_status(
@@ -301,3 +318,29 @@ def status(job_id: str) -> None:
         message=message,
     )
     _emit_status(current_status)
+
+
+@app.command()
+def bundle(job_id: str) -> None:
+    """
+    Create or refresh a Catena job bundle for a given job_id.
+    """
+
+    job_paths = get_job_paths(job_id)
+    try:
+        zip_path = create_job_bundle(job_id)
+    except FileNotFoundError as exc:
+        _emit_bundle_result(
+            job_id=job_id,
+            job_dir=str(job_paths.job_dir),
+            zip_path=str(job_paths.zip_path),
+            message=str(exc),
+        )
+        raise typer.Exit(code=1) from exc
+
+    _emit_bundle_result(
+        job_id=job_id,
+        job_dir=str(job_paths.job_dir),
+        zip_path=str(zip_path),
+        message="bundle created",
+    )

@@ -7,6 +7,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from zipfile import ZIP_DEFLATED, ZipFile
 
 from pydantic import field_validator
 
@@ -71,6 +72,19 @@ def _read_json_file(path: Path) -> dict[str, Any]:
     """Read a JSON file from disk."""
 
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _iter_bundle_members(job_paths: JobPaths) -> list[Path]:
+    """Return job files that should be included in a bundle."""
+
+    members: list[Path] = []
+    for path in sorted(job_paths.job_dir.rglob("*")):
+        if not path.is_file():
+            continue
+        if path.resolve() == job_paths.zip_path.resolve():
+            continue
+        members.append(path)
+    return members
 
 
 class PersistedStateRecord(CatenaModel):
@@ -158,6 +172,21 @@ def read_state_json(job_id: str, base_dir: str | Path | None = None) -> Persiste
 
     job_paths = get_job_paths(job_id, base_dir=base_dir)
     return PersistedStateRecord.from_json(job_paths.state_json.read_text(encoding="utf-8"))
+
+
+def create_job_bundle(job_id: str, base_dir: str | Path | None = None) -> Path:
+    """Create or refresh the bundle zip for a job."""
+
+    job_paths = get_job_paths(job_id, base_dir=base_dir)
+    if not job_paths.job_dir.exists():
+        msg = f"job '{job_id}' does not exist"
+        raise FileNotFoundError(msg)
+
+    job_paths.bundle_dir.mkdir(parents=True, exist_ok=True)
+    with ZipFile(job_paths.zip_path, mode="w", compression=ZIP_DEFLATED) as bundle_zip:
+        for path in _iter_bundle_members(job_paths):
+            bundle_zip.write(path, arcname=path.relative_to(job_paths.job_dir))
+    return job_paths.zip_path
 
 
 def create_job_layout(job_request: JobRequest, base_dir: str | Path | None = None) -> JobPaths:

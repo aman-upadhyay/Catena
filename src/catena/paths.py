@@ -54,5 +54,5 @@ def get_job_paths(job_id: str, base_dir: str | Path | None = None) -> JobPaths:
         slurm_script=job_dir / "slurm.sh",
         out_log=job_dir / "out.log",
         err_log=job_dir / "err.log",
-        zip_path=job_dir / f"{job_id}.zip",
+        zip_path=job_dir / "bundle" / f"{job_id}.zip",
     )
