@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -36,7 +37,7 @@ def run_ssh_command(
     """Run a Catena command on the remote host over SSH."""
 
     return subprocess.run(
-        ["ssh", f"{user}@{host}", *remote_args],
+        ["ssh", f"{user}@{host}", " ".join(shlex.quote(arg) for arg in remote_args)],
         input=stdin_text,
         capture_output=True,
         text=True,

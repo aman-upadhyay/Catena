@@ -25,4 +25,4 @@ CATENA_ENV = "Catena"
 
 REMOTE_HOST = "amarel.rutgers.edu"
 REMOTE_USER = "au152"
-REMOTE_SERVER_CMD = "catena-server"
+REMOTE_SERVER_CMD = "/home/au152/Software/miniconda3/envs/Catena/bin/catena-server"
