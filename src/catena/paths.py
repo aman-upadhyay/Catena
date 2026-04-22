@@ -51,8 +51,8 @@ def get_job_paths(job_id: str, base_dir: str | Path | None = None) -> JobPaths:
         bundle_dir=job_dir / "bundle",
         job_json=job_dir / "job.json",
         state_json=job_dir / "state.json",
-        slurm_script=job_dir / "job.sbatch",
-        out_log=job_dir / "slurm.out",
-        err_log=job_dir / "slurm.err",
+        slurm_script=job_dir / "slurm.sh",
+        out_log=job_dir / "out.log",
+        err_log=job_dir / "err.log",
         zip_path=job_dir / f"{job_id}.zip",
     )
