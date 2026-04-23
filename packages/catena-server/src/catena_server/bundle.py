@@ -9,7 +9,17 @@ from zipfile import ZIP_DEFLATED, ZipFile
 from catena_common.paths import JobPaths, get_job_paths
 
 
-def _iter_bundle_members(job_paths: JobPaths) -> list[Path]:
+def _is_relative_to(path: Path, parent: Path) -> bool:
+    """Return True when path is inside parent."""
+
+    try:
+        path.relative_to(parent)
+    except ValueError:
+        return False
+    return True
+
+
+def _iter_bundle_members(job_paths: JobPaths, include_inputs: bool = True) -> list[Path]:
     """Return job files that should be included in a bundle."""
 
     members: list[Path] = []
@@ -18,11 +28,13 @@ def _iter_bundle_members(job_paths: JobPaths) -> list[Path]:
             continue
         if path.resolve() == job_paths.zip_path.resolve():
             continue
+        if not include_inputs and _is_relative_to(path, job_paths.inputs_dir):
+            continue
         members.append(path)
     return members
 
 
-def create_job_bundle(job_id: str, base_dir: str | Path | None = None) -> Path:
+def create_job_bundle(job_id: str, base_dir: str | Path | None = None, include_inputs: bool = True) -> Path:
     """Create or refresh the bundle zip for a job."""
 
     job_paths = get_job_paths(job_id, base_dir=base_dir)
@@ -32,7 +44,7 @@ def create_job_bundle(job_id: str, base_dir: str | Path | None = None) -> Path:
 
     job_paths.bundle_dir.mkdir(parents=True, exist_ok=True)
     with ZipFile(job_paths.zip_path, mode="w", compression=ZIP_DEFLATED) as bundle_zip:
-        for path in _iter_bundle_members(job_paths):
+        for path in _iter_bundle_members(job_paths, include_inputs=include_inputs):
             bundle_zip.write(path, arcname=path.relative_to(job_paths.job_dir))
     return job_paths.zip_path
 

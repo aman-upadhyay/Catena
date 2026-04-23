@@ -165,8 +165,10 @@ Upload large files to the server-side staging area before submit:
 catena-client upload large_input_job events.hepmc weights.dat
 ```
 
-Fetch a completed job bundle. This remotely runs `catena-server bundle JOB_ID`
-first, then copies the zip back using rsync if available or scp as fallback.
+Fetch a completed job bundle. This remotely runs
+`catena-server bundle JOB_ID --no-inputs` first, then copies the zip back using
+rsync if available or scp as fallback. Fetched archives omit `inputs/` so large
+or staged input files are not downloaded again.
 
 ```bash
 catena-client fetch example_python_job
@@ -204,6 +206,7 @@ Create or refresh a bundle:
 
 ```bash
 catena-server bundle example_python_job
+catena-server bundle example_python_job --no-inputs
 ```
 
 ## What Submit Does
@@ -318,7 +321,8 @@ Active states are `SUBMITTED`, `PENDING`, and `RUNNING`.
 ## Bundle Metadata
 
 `catena-server bundle JOB_ID` zips the job directory while avoiding recursive
-inclusion of the zip itself. The response includes:
+inclusion of the zip itself. By default it includes `inputs/`; pass
+`--no-inputs` to omit input files. The response includes:
 
 ```json
 {

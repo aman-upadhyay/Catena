@@ -141,6 +141,9 @@ readability and future compatibility.
 7. Prints JSON with `job_id`, `job_dir`, `zip_path`, `zip_size_bytes`,
    `zip_sha256`, and `message`.
 
+Direct server bundles include `inputs/` by default for compatibility. The
+`--no-inputs` option omits files under `inputs/`.
+
 ## Client SSH Design
 
 The client uses `subprocess.run` with SSH and a shell-quoted remote command
@@ -168,8 +171,11 @@ catena-server status JOB_ID
 Client fetch calls:
 
 ```text
-catena-server bundle JOB_ID
+catena-server bundle JOB_ID --no-inputs
 ```
+
+This keeps fetched archives focused on logs, metadata, and outputs instead of
+downloading the original input files again.
 
 ## Transfer Design
 

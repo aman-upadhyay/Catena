@@ -424,7 +424,14 @@ def status(job_id: str) -> None:
 
 
 @app.command()
-def bundle(job_id: str) -> None:
+def bundle(
+    job_id: str,
+    include_inputs: bool = typer.Option(
+        True,
+        "--include-inputs/--no-inputs",
+        help="Include staged input files in the bundle.",
+    ),
+) -> None:
     """
     Create or refresh a Catena job bundle for a given job_id.
     """
@@ -436,7 +443,7 @@ def bundle(job_id: str) -> None:
         raise typer.Exit(code=2) from exc
 
     try:
-        zip_path = create_job_bundle(job_id)
+        zip_path = create_job_bundle(job_id, include_inputs=include_inputs)
     except FileNotFoundError as exc:
         _emit_bundle_result(
             job_id=job_id,

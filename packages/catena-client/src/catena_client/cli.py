@@ -195,7 +195,7 @@ def fetch(
         result = run_ssh_command(
             host=host,
             user=user,
-            remote_args=[config.REMOTE_SERVER_CMD, "bundle", job_id],
+            remote_args=[config.REMOTE_SERVER_CMD, "bundle", job_id, "--no-inputs"],
         )
         payload = handle_remote_result(result)
         remote_zip_path = payload["zip_path"]
@@ -229,7 +229,7 @@ def fetch(
 @app.command()
 def watch(
     job_id: str,
-    interval: float = typer.Option(20.0, "--interval", help="Polling interval in seconds."),
+    interval: float = typer.Option(10.0, "--interval", help="Polling interval in seconds."),
     host: str = typer.Option(config.REMOTE_HOST, "--host", help="Remote SSH host."),
     user: str = typer.Option(config.REMOTE_USER, "--user", help="Remote SSH user."),
 ) -> None:
