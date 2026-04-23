@@ -6,6 +6,8 @@ import json
 import shlex
 import shutil
 import subprocess
+import sys
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -68,6 +70,14 @@ def emit_error(message: str) -> None:
     emit_json({"message": message})
 
 
+def resolve_progress_option(progress: bool | None) -> bool:
+    """Resolve the transfer progress setting from CLI input and TTY state."""
+
+    if progress is not None:
+        return progress
+    return sys.stderr.isatty()
+
+
 def remote_stage_dir(job_id: str) -> str:
     """Return the remote staging directory for a job."""
 
@@ -115,39 +125,98 @@ def ensure_remote_stage_dir(host: str, user: str, job_id: str) -> None:
         raise RuntimeError(f"ssh failed with exit code {result.returncode}: {stderr}")
 
 
-def upload_with_rsync(host: str, user: str, job_id: str, files: list[str]) -> subprocess.CompletedProcess[str]:
+def run_transfer_command(command: list[str], progress: bool) -> subprocess.CompletedProcess[str]:
+    """Run a transfer command while keeping final JSON output isolated on stdout."""
+
+    if not progress:
+        return subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    process = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    stdout_chunks: list[str] = []
+    stderr_chunks: list[str] = []
+
+    def forward(stream: Any, chunks: list[str]) -> None:
+        while True:
+            chunk = stream.read(1)
+            if chunk == "":
+                break
+            chunks.append(chunk)
+            sys.stderr.write(chunk)
+            sys.stderr.flush()
+        stream.close()
+
+    threads = [
+        threading.Thread(target=forward, args=(process.stdout, stdout_chunks)),
+        threading.Thread(target=forward, args=(process.stderr, stderr_chunks)),
+    ]
+    for thread in threads:
+        thread.start()
+
+    returncode = process.wait()
+    for thread in threads:
+        thread.join()
+
+    return subprocess.CompletedProcess(
+        command,
+        returncode,
+        "".join(stdout_chunks),
+        "".join(stderr_chunks),
+    )
+
+
+def upload_with_rsync(
+    host: str,
+    user: str,
+    job_id: str,
+    files: list[str],
+    progress: bool,
+) -> subprocess.CompletedProcess[str]:
     """Upload files with rsync over SSH."""
 
     destination = f"{user}@{host}:{remote_stage_dir(job_id)}/"
-    return subprocess.run(
-        ["rsync", "-av", "-e", "ssh", *files, destination],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    command = ["rsync", "-av", "-e", "ssh"]
+    if progress:
+        command.extend(["--info=progress2", "--human-readable"])
+    command.extend([*files, destination])
+    return run_transfer_command(command, progress=progress)
 
 
-def upload_with_scp(host: str, user: str, job_id: str, files: list[str]) -> subprocess.CompletedProcess[str]:
+def upload_with_scp(
+    host: str,
+    user: str,
+    job_id: str,
+    files: list[str],
+    progress: bool,
+) -> subprocess.CompletedProcess[str]:
     """Upload files with scp as a fallback."""
 
     destination = f"{user}@{host}:{remote_stage_dir(job_id)}/"
-    return subprocess.run(
-        ["scp", *files, destination],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    command = ["scp"]
+    if not progress:
+        command.append("-q")
+    command.extend([*files, destination])
+    return run_transfer_command(command, progress=progress)
 
 
-def upload_files(host: str, user: str, job_id: str, files: list[str]) -> None:
+def upload_files(host: str, user: str, job_id: str, files: list[str], progress: bool) -> None:
     """Upload files to the remote staging area with rsync or scp fallback."""
 
     if shutil.which("rsync"):
-        result = upload_with_rsync(host, user, job_id, files)
+        result = upload_with_rsync(host, user, job_id, files, progress=progress)
         if result.returncode == 0:
             return
         if shutil.which("scp"):
-            fallback = upload_with_scp(host, user, job_id, files)
+            fallback = upload_with_scp(host, user, job_id, files, progress=progress)
             if fallback.returncode == 0:
                 return
             stderr = fallback.stderr.strip() or result.stderr.strip() or "scp upload failed"
@@ -156,7 +225,7 @@ def upload_files(host: str, user: str, job_id: str, files: list[str]) -> None:
         raise RuntimeError(stderr)
 
     if shutil.which("scp"):
-        result = upload_with_scp(host, user, job_id, files)
+        result = upload_with_scp(host, user, job_id, files, progress=progress)
         if result.returncode == 0:
             return
         stderr = result.stderr.strip() or "scp upload failed"
@@ -165,39 +234,49 @@ def upload_files(host: str, user: str, job_id: str, files: list[str]) -> None:
     raise RuntimeError("neither rsync nor scp is available locally")
 
 
-def fetch_with_rsync(host: str, user: str, remote_path: str, local_path: Path) -> subprocess.CompletedProcess[str]:
+def fetch_with_rsync(
+    host: str,
+    user: str,
+    remote_path: str,
+    local_path: Path,
+    progress: bool,
+) -> subprocess.CompletedProcess[str]:
     """Fetch a remote file with rsync over SSH."""
 
     local_path.parent.mkdir(parents=True, exist_ok=True)
-    return subprocess.run(
-        ["rsync", "-av", "-e", "ssh", f"{user}@{host}:{remote_path}", str(local_path)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    command = ["rsync", "-av", "-e", "ssh"]
+    if progress:
+        command.extend(["--info=progress2", "--human-readable"])
+    command.extend([f"{user}@{host}:{remote_path}", str(local_path)])
+    return run_transfer_command(command, progress=progress)
 
 
-def fetch_with_scp(host: str, user: str, remote_path: str, local_path: Path) -> subprocess.CompletedProcess[str]:
+def fetch_with_scp(
+    host: str,
+    user: str,
+    remote_path: str,
+    local_path: Path,
+    progress: bool,
+) -> subprocess.CompletedProcess[str]:
     """Fetch a remote file with scp as a fallback."""
 
     local_path.parent.mkdir(parents=True, exist_ok=True)
-    return subprocess.run(
-        ["scp", f"{user}@{host}:{remote_path}", str(local_path)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    command = ["scp"]
+    if not progress:
+        command.append("-q")
+    command.extend([f"{user}@{host}:{remote_path}", str(local_path)])
+    return run_transfer_command(command, progress=progress)
 
 
-def fetch_file(host: str, user: str, remote_path: str, local_path: Path) -> None:
+def fetch_file(host: str, user: str, remote_path: str, local_path: Path, progress: bool) -> None:
     """Fetch a remote file locally with rsync or scp fallback."""
 
     if shutil.which("rsync"):
-        result = fetch_with_rsync(host, user, remote_path, local_path)
+        result = fetch_with_rsync(host, user, remote_path, local_path, progress=progress)
         if result.returncode == 0:
             return
         if shutil.which("scp"):
-            fallback = fetch_with_scp(host, user, remote_path, local_path)
+            fallback = fetch_with_scp(host, user, remote_path, local_path, progress=progress)
             if fallback.returncode == 0:
                 return
             stderr = fallback.stderr.strip() or result.stderr.strip() or "scp fetch failed"
@@ -206,7 +285,7 @@ def fetch_file(host: str, user: str, remote_path: str, local_path: Path) -> None
         raise RuntimeError(stderr)
 
     if shutil.which("scp"):
-        result = fetch_with_scp(host, user, remote_path, local_path)
+        result = fetch_with_scp(host, user, remote_path, local_path, progress=progress)
         if result.returncode == 0:
             return
         stderr = result.stderr.strip() or "scp fetch failed"
@@ -273,6 +352,7 @@ def status(
 def upload(
     job_id: str,
     files: list[str],
+    progress: bool | None = typer.Option(None, "--progress/--no-progress", help="Show transfer progress on stderr."),
     host: str = typer.Option(config.REMOTE_HOST, "--host", help="Remote SSH host."),
     user: str = typer.Option(config.REMOTE_USER, "--user", help="Remote SSH user."),
 ) -> None:
@@ -285,6 +365,7 @@ def upload(
         raise typer.Exit(code=1)
 
     try:
+        progress_enabled = resolve_progress_option(progress)
         local_files = [str(Path(file).resolve()) for file in files]
         for file in local_files:
             path = Path(file)
@@ -296,7 +377,7 @@ def upload(
                 raise ValueError(msg)
 
         ensure_remote_stage_dir(host, user, job_id)
-        upload_files(host, user, job_id, local_files)
+        upload_files(host, user, job_id, local_files, progress=progress_enabled)
     except (FileNotFoundError, OSError, RuntimeError, ValueError) as exc:
         emit_json(
             {
@@ -322,6 +403,7 @@ def upload(
 def fetch(
     job_id: str,
     dest: str | None = typer.Option(None, "--dest", help="Local destination path for the fetched zip."),
+    progress: bool | None = typer.Option(None, "--progress/--no-progress", help="Show transfer progress on stderr."),
     host: str = typer.Option(config.REMOTE_HOST, "--host", help="Remote SSH host."),
     user: str = typer.Option(config.REMOTE_USER, "--user", help="Remote SSH user."),
 ) -> None:
@@ -332,6 +414,7 @@ def fetch(
     local_path = Path(dest) if dest is not None else Path.cwd() / f"{job_id}.zip"
 
     try:
+        progress_enabled = resolve_progress_option(progress)
         result = run_ssh_command(
             host=host,
             user=user,
@@ -343,7 +426,7 @@ def fetch(
         if not isinstance(remote_zip_path, str) or not isinstance(remote_job_id, str):
             msg = "remote bundle response is missing job_id or zip_path"
             raise ValueError(msg)
-        fetch_file(host, user, remote_zip_path, local_path)
+        fetch_file(host, user, remote_zip_path, local_path, progress=progress_enabled)
     except (KeyError, OSError, ValueError, RuntimeError) as exc:
         emit_json(
             {
