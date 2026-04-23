@@ -111,6 +111,8 @@ class PersistedStateRecord(CatenaModel):
     last_update_time: str | None = None
     final_slurm_state: str | None = None
     bundle_path: str | None = None
+    failure_reason: str | None = None
+    exit_code: int | None = None
 
     @field_validator("job_id")
     @classmethod
@@ -156,6 +158,8 @@ def write_state_json(
     finish_time: str | None = None,
     final_slurm_state: str | None = None,
     bundle_path: str | None = None,
+    failure_reason: str | None = None,
+    exit_code: int | None = None,
     base_dir: str | Path | None = None,
 ) -> PersistedStateRecord:
     """Persist the current job state to disk."""
@@ -179,11 +183,18 @@ def write_state_json(
             final_slurm_state = existing_state.final_slurm_state
         if bundle_path is None:
             bundle_path = existing_state.bundle_path
+        if failure_reason is None:
+            failure_reason = existing_state.failure_reason
+        if exit_code is None:
+            exit_code = existing_state.exit_code
 
     if state == JobState.SUBMITTED and submit_time is None:
         submit_time = timestamp
     if state in {JobState.COMPLETED, JobState.FAILED, JobState.CANCELLED} and finish_time is None:
         finish_time = timestamp
+    if state != JobState.FAILED:
+        failure_reason = None
+        exit_code = None
 
     # `updated_at` keeps compatibility with the original state file. The newer
     # `last_update_time` makes the status-polling meaning explicit.
@@ -201,6 +212,8 @@ def write_state_json(
         last_update_time=timestamp,
         final_slurm_state=final_slurm_state,
         bundle_path=bundle_path,
+        failure_reason=failure_reason,
+        exit_code=exit_code,
     )
     dump_json_file(job_paths.state_json, record.model_dump(mode="json"), indent=2)
     return record

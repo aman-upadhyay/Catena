@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 import typer
@@ -47,6 +48,14 @@ TERMINAL_STATES = {
 }
 
 
+@dataclass(frozen=True, slots=True)
+class SlurmStateInfo:
+    """Small parsed view of SLURM state information."""
+
+    state: str
+    exit_code: int | None = None
+
+
 def load_request(path: str) -> JobRequest:
     """Load and validate a job request from a JSON file."""
 
@@ -55,7 +64,7 @@ def load_request(path: str) -> JobRequest:
     return JobRequest.from_json(Path(path).read_text(encoding="utf-8"))
 
 
-def submit_slurm_script(script_path: Path) -> tuple[str | None, str | None]:
+def submit_slurm_script(script_path: Path) -> tuple[str | None, str | None, int | None]:
     """Submit a rendered SLURM script and return the job id or an error."""
 
     result = subprocess.run(
@@ -65,13 +74,13 @@ def submit_slurm_script(script_path: Path) -> tuple[str | None, str | None]:
         check=False,
     )
     if result.returncode != 0:
-        return None, result.stderr.strip() or "sbatch failed"
+        return None, result.stderr.strip() or "sbatch failed", result.returncode
 
     stdout = result.stdout.strip()
     if not stdout:
-        return None, result.stderr.strip() or "sbatch returned no job id"
+        return None, result.stderr.strip() or "sbatch returned no job id", result.returncode
 
-    return stdout.split(";", maxsplit=1)[0].strip(), None
+    return stdout.split(";", maxsplit=1)[0].strip(), None, None
 
 
 def query_squeue(slurm_job_id: str) -> tuple[str | None, str | None]:
@@ -92,11 +101,20 @@ def query_squeue(slurm_job_id: str) -> tuple[str | None, str | None]:
     return states[0], None
 
 
-def query_sacct(slurm_job_id: str) -> tuple[str | None, str | None]:
+def parse_slurm_exit_code(value: str) -> int | None:
+    """Parse a SLURM ExitCode field like 1:0 into the process exit status."""
+
+    try:
+        return int(value.split(":", maxsplit=1)[0])
+    except (ValueError, IndexError):
+        return None
+
+
+def query_sacct(slurm_job_id: str) -> tuple[SlurmStateInfo | None, str | None]:
     """Query historical SLURM state from sacct."""
 
     result = subprocess.run(
-        ["sacct", "--noheader", "--parsable2", "--format=State", "--jobs", slurm_job_id],
+        ["sacct", "--noheader", "--parsable2", "--format=State,ExitCode", "--jobs", slurm_job_id],
         capture_output=True,
         text=True,
         check=False,
@@ -104,10 +122,13 @@ def query_sacct(slurm_job_id: str) -> tuple[str | None, str | None]:
     if result.returncode != 0:
         return None, result.stderr.strip() or "sacct failed"
 
-    states = [line.strip().split("|", maxsplit=1)[0] for line in result.stdout.splitlines() if line.strip()]
-    if not states:
+    records = [line.strip().split("|") for line in result.stdout.splitlines() if line.strip()]
+    if not records:
         return None, None
-    return states[0], None
+    fields = records[0]
+    state = fields[0]
+    exit_code = parse_slurm_exit_code(fields[1]) if len(fields) > 1 else None
+    return SlurmStateInfo(state=state, exit_code=exit_code), None
 
 
 def map_slurm_state(slurm_state: str) -> JobState:
@@ -149,6 +170,12 @@ def _emit_error(error_type: str, message: str) -> None:
     typer.echo(dumps_json({"error_type": error_type, "message": message}, indent=2))
 
 
+def _emit_submit_error(error_type: str, job_id: str, message: str) -> None:
+    """Print a machine-readable submit error document."""
+
+    typer.echo(dumps_json({"error_type": error_type, "job_id": job_id, "message": message}, indent=2))
+
+
 def _emit_bundle_result(
     job_id: str,
     job_dir: str,
@@ -180,6 +207,8 @@ def _build_status(
     job_dir: str,
     slurm_job_id: str | None = None,
     message: str | None = None,
+    failure_reason: str | None = None,
+    exit_code: int | None = None,
 ) -> JobStatus:
     """Construct a JSON-serializable status payload."""
 
@@ -190,6 +219,8 @@ def _build_status(
         slurm_job_id=slurm_job_id,
         job_dir=job_dir,
         message=message,
+        failure_reason=failure_reason,
+        exit_code=exit_code,
     )
 
 
@@ -211,11 +242,43 @@ def _terminal_slurm_state(slurm_state: str, mapped_state: JobState) -> str | Non
     return None
 
 
+def _read_text_if_exists(path: Path) -> str:
+    """Read a text file if it exists, returning an empty string otherwise."""
+
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except FileNotFoundError:
+        return ""
+
+
+def infer_failure_reason(job_id: str, slurm_state: str | None = None) -> str:
+    """Infer a concise failed-job reason from runner markers and SLURM state."""
+
+    job_paths = get_job_paths(job_id)
+    out_log = _read_text_if_exists(job_paths.out_log)
+    if "=== CPP COMPILE FAILED ===" in out_log:
+        return "compile failed; see err.log"
+    if "=== CPP RUN FAILED ===" in out_log:
+        return "process exited nonzero"
+    if "=== PYTHON TASK FAILURE ===" in out_log:
+        return "process exited nonzero"
+
+    normalized = normalize_slurm_state(slurm_state or "")
+    if normalized == "TIMEOUT":
+        return "slurm job timed out"
+    if normalized == "CANCELLED":
+        return "slurm job was cancelled"
+    if normalized:
+        return f"slurm job ended with {normalized}; see err.log"
+    return "slurm job failed; see err.log"
+
+
 def _update_state_from_slurm(
     job_id: str,
     state_record,
     slurm_job_id: str,
     slurm_state: str,
+    slurm_exit_code: int | None = None,
 ):
     """Persist state metadata from an observed SLURM state."""
 
@@ -225,12 +288,16 @@ def _update_state_from_slurm(
 
     target_state = mapped_state if _should_update_state(state_record.state, mapped_state) else state_record.state
     final_slurm_state = _terminal_slurm_state(slurm_state, mapped_state)
+    failure_reason = infer_failure_reason(job_id, slurm_state) if target_state == JobState.FAILED else None
+    message = failure_reason if target_state == JobState.FAILED else None
     updated_record = write_state_json(
         job_id,
         target_state,
         slurm_job_id=slurm_job_id,
-        message=None,
+        message=message,
         final_slurm_state=final_slurm_state,
+        failure_reason=failure_reason,
+        exit_code=slurm_exit_code,
     )
     return updated_record, updated_record.state, updated_record.message
 
@@ -261,14 +328,11 @@ def submit(request_path: str) -> None:
 
     job_paths = get_job_paths(job_request.job_id)
     if job_exists(job_request.job_id):
-        duplicate_status = _build_status(
+        _emit_submit_error(
+            error_type="job_id_exists",
             job_id=job_request.job_id,
-            state=JobState.UNKNOWN,
-            slurm_job_id=None,
-            job_dir=str(job_paths.job_dir),
-            message=f"job '{job_request.job_id}' already exists",
+            message=f"job_id '{job_request.job_id}' already exists at {job_paths.job_dir}",
         )
-        _emit_status(duplicate_status)
         raise typer.Exit(code=1)
 
     try:
@@ -286,40 +350,73 @@ def submit(request_path: str) -> None:
 
     try:
         create_job_layout(job_request)
-    except (FileExistsError, FileNotFoundError, OSError, ValueError) as exc:
-        failed_status = _build_status(
+    except FileExistsError as exc:
+        _emit_submit_error(
+            error_type="job_id_exists",
             job_id=job_request.job_id,
-            state=JobState.UNKNOWN,
-            slurm_job_id=None,
-            job_dir=str(job_paths.job_dir),
-            message=str(exc),
+            message=f"job_id '{job_request.job_id}' already exists at {job_paths.job_dir}",
+        )
+        raise typer.Exit(code=1) from exc
+    except (FileNotFoundError, OSError, ValueError) as exc:
+        failure_reason = str(exc)
+        failed_record = write_state_json(
+            job_request.job_id,
+            JobState.FAILED,
+            message=failure_reason,
+            failure_reason=failure_reason,
+        )
+        failed_status = _build_status(
+            job_id=failed_record.job_id,
+            state=failed_record.state,
+            slurm_job_id=failed_record.slurm_job_id,
+            job_dir=failed_record.job_dir,
+            message=failed_record.message,
+            failure_reason=failed_record.failure_reason,
+            exit_code=failed_record.exit_code,
         )
         _emit_status(failed_status)
         raise typer.Exit(code=1) from exc
 
     try:
         script_path = write_slurm_script(job_request.job_id, body)
-        slurm_job_id, submit_error = submit_slurm_script(script_path)
+        slurm_job_id, submit_error, submit_exit_code = submit_slurm_script(script_path)
     except OSError as exc:
-        failed_record = write_state_json(job_request.job_id, JobState.FAILED, message=str(exc))
+        failure_reason = str(exc)
+        failed_record = write_state_json(
+            job_request.job_id,
+            JobState.FAILED,
+            message=failure_reason,
+            failure_reason=failure_reason,
+        )
         failed_status = _build_status(
             job_id=failed_record.job_id,
             state=failed_record.state,
             slurm_job_id=failed_record.slurm_job_id,
             job_dir=failed_record.job_dir,
             message=failed_record.message,
+            failure_reason=failed_record.failure_reason,
+            exit_code=failed_record.exit_code,
         )
         _emit_status(failed_status)
         raise typer.Exit(code=1) from exc
 
     if submit_error or not slurm_job_id:
-        failed_record = write_state_json(job_request.job_id, JobState.FAILED, message=submit_error)
+        failure_reason = submit_error or "sbatch failed"
+        failed_record = write_state_json(
+            job_request.job_id,
+            JobState.FAILED,
+            message=failure_reason,
+            failure_reason=failure_reason,
+            exit_code=submit_exit_code,
+        )
         failed_status = _build_status(
             job_id=failed_record.job_id,
             state=failed_record.state,
             slurm_job_id=failed_record.slurm_job_id,
             job_dir=failed_record.job_dir,
             message=failed_record.message,
+            failure_reason=failed_record.failure_reason,
+            exit_code=failed_record.exit_code,
         )
         _emit_status(failed_status)
         raise typer.Exit(code=1)
@@ -336,6 +433,8 @@ def submit(request_path: str) -> None:
         slurm_job_id=submitted_record.slurm_job_id,
         job_dir=submitted_record.job_dir,
         message=submitted_record.message,
+        failure_reason=submitted_record.failure_reason,
+        exit_code=submitted_record.exit_code,
     )
     _emit_status(submitted_status)
 
@@ -371,6 +470,8 @@ def status(job_id: str) -> None:
     current_state = state_record.state
     slurm_job_id = state_record.slurm_job_id
     message = state_record.message
+    failure_reason = state_record.failure_reason
+    slurm_exit_code = state_record.exit_code
     exit_code = 0
 
     if slurm_job_id:
@@ -384,6 +485,8 @@ def status(job_id: str) -> None:
                 slurm_job_id,
                 squeue_state,
             )
+            failure_reason = state_record.failure_reason
+            slurm_exit_code = state_record.exit_code
         else:
             sacct_state, sacct_error = query_sacct(slurm_job_id)
             if sacct_state:
@@ -391,8 +494,11 @@ def status(job_id: str) -> None:
                     job_id,
                     state_record,
                     slurm_job_id,
-                    sacct_state,
+                    sacct_state.state,
+                    slurm_exit_code=sacct_state.exit_code,
                 )
+                failure_reason = state_record.failure_reason
+                slurm_exit_code = state_record.exit_code
             else:
                 errors = []
                 if squeue_error:
@@ -403,12 +509,20 @@ def status(job_id: str) -> None:
                 if errors:
                     exit_code = 1
 
+    if current_state == JobState.FAILED and not failure_reason:
+        failure_reason = infer_failure_reason(job_id, state_record.final_slurm_state)
+        message = message or failure_reason
+    if current_state == JobState.FAILED and failure_reason and not message:
+        message = failure_reason
+
     # Refresh last_update_time even when SLURM did not report a newer state.
     state_record = write_state_json(
         job_id,
         current_state,
         slurm_job_id=slurm_job_id,
         message=message,
+        failure_reason=failure_reason,
+        exit_code=slurm_exit_code,
     )
 
     current_status = _build_status(
@@ -417,6 +531,8 @@ def status(job_id: str) -> None:
         slurm_job_id=slurm_job_id,
         job_dir=state_record.job_dir,
         message=state_record.message,
+        failure_reason=state_record.failure_reason,
+        exit_code=state_record.exit_code,
     )
     _emit_status(current_status)
     if exit_code != 0:

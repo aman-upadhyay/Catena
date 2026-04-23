@@ -156,7 +156,7 @@ machine-readable JSON response is printed once to stdout.
 
 ```bash
 catena-client watch example_python_job
-catena-client watch example_python_job --interval 20
+catena-client watch example_python_job --interval 10
 ```
 
 Upload large files to the server-side staging area before submit:
@@ -301,6 +301,8 @@ stores:
 - `last_update_time`
 - `final_slurm_state`
 - `bundle_path`
+- `failure_reason`
+- `exit_code`
 
 `catena-server status` reads the local state, queries `squeue` first, then
 queries `sacct` if the job is no longer visible in `squeue`. SLURM states are
@@ -317,6 +319,11 @@ unknown   -> UNKNOWN
 ```
 
 Active states are `SUBMITTED`, `PENDING`, and `RUNNING`.
+
+When a job fails, `status` includes a short `failure_reason` when Catena can
+infer one. Runner markers are preferred over generic SLURM states, for example
+`compile failed; see err.log` or `process exited nonzero`. If no runner marker
+is available, Catena reports a generic SLURM failure reason.
 
 ## Bundle Metadata
 
@@ -343,10 +350,21 @@ nonzero and include a `message`. Where practical, errors also include an
 
 ```text
 invalid_input
+job_id_exists
 ssh_failure
 remote_response_error
 transfer_failure
 state_read_failure
+```
+
+Duplicate submit attempts return JSON like:
+
+```json
+{
+  "error_type": "job_id_exists",
+  "job_id": "example_python_job",
+  "message": "job_id 'example_python_job' already exists at /scratch/au152/agent_job/example_python_job"
+}
 ```
 
 Transfer progress, watch updates, and SSH transfer progress are kept on stderr

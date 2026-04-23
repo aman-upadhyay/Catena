@@ -267,7 +267,8 @@ def watch(
 
         state = str(payload.get("state", "UNKNOWN"))
         active = bool(payload.get("active", False))
-        message = payload.get("message")
+        failure_reason = payload.get("failure_reason")
+        message = failure_reason if state == "FAILED" and failure_reason else payload.get("message")
         detail = f" ({message})" if message else ""
         # Keep polling output on stderr so stdout remains one final JSON object.
         typer.echo(f"{job_id}: {state}{detail}", err=True)

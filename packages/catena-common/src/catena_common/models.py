@@ -218,6 +218,8 @@ class JobStatus(CatenaModel):
     slurm_job_id: str | None = None
     job_dir: str
     message: str | None = None
+    failure_reason: str | None = None
+    exit_code: int | None = None
 
     @field_validator("job_id")
     @classmethod

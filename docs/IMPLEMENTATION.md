@@ -123,10 +123,17 @@ finish_time
 last_update_time
 final_slurm_state
 bundle_path
+failure_reason
+exit_code
 ```
 
 `updated_at` and `last_update_time` currently move together. Both are kept for
 readability and future compatibility.
+
+`failure_reason` and `exit_code` are populated when Catena has enough
+information. Submit-time failures store the local error directly. Runtime
+failures are inferred from runner markers in `out.log` where possible, falling
+back to a generic SLURM terminal-state reason.
 
 ## Bundle Flow
 
@@ -199,8 +206,11 @@ is sent to stderr only. Final JSON is always printed on stdout.
 - the remote command exits nonzero, or
 - the returned JSON has `"active": false`.
 
-The default interval is 20 seconds. Intermediate updates are human-readable
+The default interval is 10 seconds. Intermediate updates are human-readable
 and go to stderr. The final status JSON is printed once to stdout.
+
+When the final state is `FAILED`, watch prefers `failure_reason` over the
+generic `message` field for the stderr line.
 
 ## Error Handling Design
 
@@ -216,6 +226,8 @@ Client-side error categories:
 Server-side error categories:
 
 - `invalid_input`: invalid job id or invalid request JSON.
+- `job_id_exists`: submit rejected because the final job directory already
+  exists.
 - `state_read_failure`: `state.json` exists but cannot be read or parsed.
 
 Some older response shapes are intentionally preserved. For example,
