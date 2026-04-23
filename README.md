@@ -1,3 +1,4 @@
 # Catena
 
-Initial project scaffold for the Catena CLI and package layout.
+- Pascal3: `pip install -e packages/catena-client`
+- Amarel: `pip install -e packages/catena-server`
