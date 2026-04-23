@@ -269,8 +269,12 @@ The runner reads runner-specific values from `request.extra`:
 - `out_root`: safe relative output ROOT filename in `outputs/`, default
   `output.root`.
 
+After inputs are materialized, submit reads the first 5 lines of the staged
+HepMC file. The runner selects `DelphesHepMC2` for HepMC2 headers and
+`DelphesHepMC3` for HepMC3 headers before writing `slurm.sh`.
+
 The runner activates the `DLPS` conda environment, verifies the card and HepMC
-input exist, verifies `DelphesHepMC2` is executable, and runs:
+input exist, verifies the selected executable is executable, and runs:
 
 ```bash
 "$DELPHES_EXE" "$DELPHES_CARD" "$OUT_ROOT" "$HEPMC"

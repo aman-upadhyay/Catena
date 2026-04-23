@@ -17,7 +17,7 @@ from catena_common.paths import get_job_paths
 from catena_server.bundle import bundle_metadata, create_job_bundle
 from catena_server.registry import create_job_layout, job_exists, read_state_json, write_state_json
 from catena_server.runners.cpp import build_cpp_slurm_body
-from catena_server.runners.delphes import build_delphes_slurm_body
+from catena_server.runners.delphes import build_delphes_slurm_body, delphes_settings
 from catena_server.runners.python_run import build_python_slurm_body
 from catena_server.slurm import write_slurm_script
 
@@ -340,8 +340,12 @@ def submit(request_path: str) -> None:
         )
         raise typer.Exit(code=1)
 
+    body: str | None = None
     try:
-        body = _build_runner_body(job_request)
+        if job_request.task_type.value == "delphes":
+            delphes_settings(job_request)
+        else:
+            body = _build_runner_body(job_request)
     except (NotImplementedError, ValueError) as exc:
         unsupported_status = _build_status(
             job_id=job_request.job_id,
@@ -383,9 +387,11 @@ def submit(request_path: str) -> None:
         raise typer.Exit(code=1) from exc
 
     try:
+        if body is None:
+            body = _build_runner_body(job_request)
         script_path = write_slurm_script(job_request.job_id, body)
         slurm_job_id, submit_error, submit_exit_code = submit_slurm_script(script_path)
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         failure_reason = str(exc)
         failed_record = write_state_json(
             job_request.job_id,

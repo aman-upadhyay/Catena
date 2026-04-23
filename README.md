@@ -33,7 +33,7 @@ packages/
       bundle.py       Zip bundle creation and checksum metadata.
       runners/
         cpp.py        C++ task SLURM body builder.
-        delphes.py    DelphesHepMC2 task SLURM body builder.
+        delphes.py    DelphesHepMC2/HepMC3 task SLURM body builder.
         python_run.py Python task SLURM body builder.
 ```
 
@@ -67,6 +67,8 @@ Remote user:    au152
 Remote server:  /home/au152/Software/miniconda3/envs/Catena/bin/catena-server
 Conda source:   /home/au152/Software/miniconda3/etc/profile.d/conda.sh
 Python env:     Catena
+Delphes HepMC2: /home/au152/Software/miniconda3/envs/DLPS/bin/DelphesHepMC2
+Delphes HepMC3: /home/au152/Software/miniconda3/envs/DLPS/bin/DelphesHepMC3
 ```
 
 SLURM defaults:
@@ -264,9 +266,11 @@ For Delphes jobs, request `extra` must include:
 - `hepmc_file`: relative HepMC filename under `inputs/`.
 - `out_root`: output ROOT filename under `outputs/`, default `output.root`.
 
-The generated SLURM body activates the `DLPS` conda environment, verifies the
-card and HepMC input exist, runs `DelphesHepMC2`, and writes the ROOT output
-directly into `outputs/`.
+Before writing `slurm.sh`, Catena reads the first 5 lines of the staged HepMC
+file to choose `DelphesHepMC2` or `DelphesHepMC3`. The generated SLURM body
+activates the `DLPS` conda environment, verifies the card and HepMC input
+exist, runs the selected executable, and writes the ROOT output directly into
+`outputs/`.
 
 ## Job Directory Layout
 

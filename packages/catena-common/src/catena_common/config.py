@@ -16,7 +16,9 @@ SLURM_ARRAY = "1"
 
 CONDA_SH = "/home/au152/Software/miniconda3/etc/profile.d/conda.sh"
 MG5_EXEC = "/home/au152/Software/MG5_aMC_v3_5_8/bin/mg5_aMC"
-DELPHES_EXE = "/home/au152/Software/miniconda3/envs/DLPS/bin/DelphesHepMC2"
+DELPHES_HEPMC2_EXE = "/home/au152/Software/miniconda3/envs/DLPS/bin/DelphesHepMC2"
+DELPHES_HEPMC3_EXE = "/home/au152/Software/miniconda3/envs/DLPS/bin/DelphesHepMC3"
+DELPHES_EXE = DELPHES_HEPMC3_EXE
 SRPA_EXEC = "/home/au152/Software/SRPA/sherpa/bin/Sherpa"
 
 MG_ENV = "MG"
