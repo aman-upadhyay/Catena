@@ -106,6 +106,11 @@ class PersistedStateRecord(CatenaModel):
     message: str | None = None
     created_at: str
     updated_at: str
+    submit_time: str | None = None
+    finish_time: str | None = None
+    last_update_time: str | None = None
+    final_slurm_state: str | None = None
+    bundle_path: str | None = None
 
     @field_validator("job_id")
     @classmethod
@@ -147,6 +152,10 @@ def write_state_json(
     state: JobState,
     slurm_job_id: str | None = None,
     message: str | None = None,
+    submit_time: str | None = None,
+    finish_time: str | None = None,
+    final_slurm_state: str | None = None,
+    bundle_path: str | None = None,
     base_dir: str | Path | None = None,
 ) -> PersistedStateRecord:
     """Persist the current job state to disk."""
@@ -160,6 +169,19 @@ def write_state_json(
         created_at = existing_state.created_at
         if slurm_job_id is None:
             slurm_job_id = existing_state.slurm_job_id
+        if submit_time is None:
+            submit_time = existing_state.submit_time
+        if finish_time is None:
+            finish_time = existing_state.finish_time
+        if final_slurm_state is None:
+            final_slurm_state = existing_state.final_slurm_state
+        if bundle_path is None:
+            bundle_path = existing_state.bundle_path
+
+    if state == JobState.SUBMITTED and submit_time is None:
+        submit_time = timestamp
+    if state in {JobState.COMPLETED, JobState.FAILED, JobState.CANCELLED} and finish_time is None:
+        finish_time = timestamp
 
     record = PersistedStateRecord(
         job_id=job_id,
@@ -170,6 +192,11 @@ def write_state_json(
         message=message,
         created_at=created_at,
         updated_at=timestamp,
+        submit_time=submit_time,
+        finish_time=finish_time,
+        last_update_time=timestamp,
+        final_slurm_state=final_slurm_state,
+        bundle_path=bundle_path,
     )
     dump_json_file(job_paths.state_json, record.model_dump(mode="json"), indent=2)
     return record

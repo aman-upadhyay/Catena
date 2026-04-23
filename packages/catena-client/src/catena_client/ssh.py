@@ -8,6 +8,14 @@ import subprocess
 from catena_common.jsonio import load_json_text
 
 
+class SSHError(RuntimeError):
+    """Raised when SSH itself fails before a usable remote JSON response."""
+
+
+class RemoteResponseError(ValueError):
+    """Raised when the remote command output cannot be parsed as expected."""
+
+
 def run_ssh_command(
     host: str,
     user: str,
@@ -48,15 +56,15 @@ def handle_remote_result(result: subprocess.CompletedProcess[str]) -> dict[str, 
             msg = f"remote command returned invalid JSON: {exc}"
             if stderr:
                 msg = f"{msg}; stderr: {stderr}"
-            raise ValueError(msg) from exc
+            raise RemoteResponseError(msg) from exc
 
     if result.returncode != 0:
         msg = f"ssh failed with exit code {result.returncode}"
         if stderr:
             msg = f"{msg}: {stderr}"
-        raise RuntimeError(msg)
+        raise SSHError(msg)
 
     msg = "remote command returned empty output"
     if stderr:
         msg = f"{msg}: {stderr}"
-    raise ValueError(msg)
+    raise RemoteResponseError(msg)

@@ -14,6 +14,10 @@ from catena_common import config
 from catena_client.ssh import run_ssh_command
 
 
+class TransferError(RuntimeError):
+    """Raised when upload or fetch transfer commands fail."""
+
+
 def resolve_progress_option(progress: bool | None) -> bool:
     """Resolve the transfer progress setting from CLI input and TTY state."""
 
@@ -68,7 +72,7 @@ def ensure_remote_stage_dir(host: str, user: str, job_id: str) -> None:
     result = run_ssh_command(host=host, user=user, remote_args=["mkdir", "-p", remote_stage_dir(job_id)])
     if result.returncode != 0:
         stderr = result.stderr.strip() or "ssh mkdir failed"
-        raise RuntimeError(f"ssh failed with exit code {result.returncode}: {stderr}")
+        raise TransferError(f"ssh failed with exit code {result.returncode}: {stderr}")
 
 
 def upload_with_rsync(
@@ -117,18 +121,18 @@ def upload_files(host: str, user: str, job_id: str, files: list[str], progress: 
             if fallback.returncode == 0:
                 return
             stderr = fallback.stderr.strip() or result.stderr.strip() or "scp upload failed"
-            raise RuntimeError(stderr)
+            raise TransferError(stderr)
         stderr = result.stderr.strip() or "rsync upload failed"
-        raise RuntimeError(stderr)
+        raise TransferError(stderr)
 
     if shutil.which("scp"):
         result = upload_with_scp(host, user, job_id, files, progress=progress)
         if result.returncode == 0:
             return
         stderr = result.stderr.strip() or "scp upload failed"
-        raise RuntimeError(stderr)
+        raise TransferError(stderr)
 
-    raise RuntimeError("neither rsync nor scp is available locally")
+    raise TransferError("neither rsync nor scp is available locally")
 
 
 def fetch_with_rsync(
@@ -177,15 +181,15 @@ def fetch_file(host: str, user: str, remote_path: str, local_path: Path, progres
             if fallback.returncode == 0:
                 return
             stderr = fallback.stderr.strip() or result.stderr.strip() or "scp fetch failed"
-            raise RuntimeError(stderr)
+            raise TransferError(stderr)
         stderr = result.stderr.strip() or "rsync fetch failed"
-        raise RuntimeError(stderr)
+        raise TransferError(stderr)
 
     if shutil.which("scp"):
         result = fetch_with_scp(host, user, remote_path, local_path, progress=progress)
         if result.returncode == 0:
             return
         stderr = result.stderr.strip() or "scp fetch failed"
-        raise RuntimeError(stderr)
+        raise TransferError(stderr)
 
-    raise RuntimeError("neither rsync nor scp is available locally")
+    raise TransferError("neither rsync nor scp is available locally")

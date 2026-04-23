@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
@@ -34,3 +35,23 @@ def create_job_bundle(job_id: str, base_dir: str | Path | None = None) -> Path:
         for path in _iter_bundle_members(job_paths):
             bundle_zip.write(path, arcname=path.relative_to(job_paths.job_dir))
     return job_paths.zip_path
+
+
+def sha256_file(path: str | Path) -> str:
+    """Return the SHA-256 hex digest for a file."""
+
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as file_handle:
+        for chunk in iter(lambda: file_handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def bundle_metadata(path: str | Path) -> dict[str, int | str]:
+    """Return simple metadata for a bundle zip."""
+
+    bundle_path = Path(path)
+    return {
+        "zip_size_bytes": bundle_path.stat().st_size,
+        "zip_sha256": sha256_file(bundle_path),
+    }

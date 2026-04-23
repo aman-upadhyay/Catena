@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import typer
@@ -9,10 +10,11 @@ from pydantic import ValidationError
 
 from catena_common import config
 from catena_common.jsonio import dumps_json
-from catena_common.models import JobRequest
+from catena_common.models import JobRequest, validate_job_id
 
-from catena_client.ssh import handle_remote_result, run_ssh_command
+from catena_client.ssh import RemoteResponseError, SSHError, handle_remote_result, run_ssh_command
 from catena_client.transfer import (
+    TransferError,
     ensure_remote_stage_dir,
     fetch_file,
     remote_stage_dir,
@@ -40,10 +42,24 @@ def emit_json(payload: dict[str, object]) -> None:
     typer.echo(dumps_json(payload, indent=2))
 
 
-def emit_error(message: str) -> None:
+def emit_error(message: str, error_type: str = "error") -> None:
     """Print a machine-readable error payload."""
 
-    emit_json({"message": message})
+    emit_json({"error_type": error_type, "message": message})
+
+
+def error_type_for_exception(exc: BaseException) -> str:
+    """Classify client-side failures for JSON error responses."""
+
+    if isinstance(exc, RemoteResponseError):
+        return "remote_response_error"
+    if isinstance(exc, (FileNotFoundError, ValidationError, ValueError)):
+        return "invalid_input"
+    if isinstance(exc, SSHError):
+        return "ssh_failure"
+    if isinstance(exc, TransferError):
+        return "transfer_failure"
+    return "error"
 
 
 @app.command()
@@ -66,7 +82,7 @@ def submit(
         )
         payload = handle_remote_result(result)
     except (FileNotFoundError, OSError, ValidationError, ValueError, RuntimeError) as exc:
-        emit_error(str(exc))
+        emit_error(str(exc), error_type_for_exception(exc))
         raise typer.Exit(code=1) from exc
 
     emit_json(payload)
@@ -85,6 +101,7 @@ def status(
     """
 
     try:
+        validate_job_id(job_id)
         result = run_ssh_command(
             host=host,
             user=user,
@@ -92,7 +109,7 @@ def status(
         )
         payload = handle_remote_result(result)
     except (OSError, ValueError, RuntimeError) as exc:
-        emit_error(str(exc))
+        emit_error(str(exc), error_type_for_exception(exc))
         raise typer.Exit(code=1) from exc
 
     emit_json(payload)
@@ -113,10 +130,11 @@ def upload(
     """
 
     if not files:
-        emit_error("at least one file must be provided")
+        emit_error("at least one file must be provided", "invalid_input")
         raise typer.Exit(code=1)
 
     try:
+        validate_job_id(job_id)
         progress_enabled = resolve_progress_option(progress)
         local_files = [str(Path(file).resolve()) for file in files]
         for file in local_files:
@@ -133,6 +151,7 @@ def upload(
     except (FileNotFoundError, OSError, RuntimeError, ValueError) as exc:
         emit_json(
             {
+                "error_type": error_type_for_exception(exc),
                 "job_id": job_id,
                 "uploaded_files": [],
                 "remote_stage_dir": remote_stage_dir(job_id),
@@ -163,6 +182,12 @@ def fetch(
     Fetch a bundled Catena job archive from the remote server.
     """
 
+    try:
+        validate_job_id(job_id)
+    except ValueError as exc:
+        emit_error(str(exc), "invalid_input")
+        raise typer.Exit(code=2) from exc
+
     local_path = Path(dest) if dest is not None else Path.cwd() / f"{job_id}.zip"
 
     try:
@@ -182,6 +207,7 @@ def fetch(
     except (KeyError, OSError, ValueError, RuntimeError) as exc:
         emit_json(
             {
+                "error_type": error_type_for_exception(exc),
                 "job_id": job_id,
                 "remote_zip_path": "",
                 "local_path": str(local_path),
@@ -198,3 +224,58 @@ def fetch(
             "message": "fetch completed",
         }
     )
+
+
+@app.command()
+def watch(
+    job_id: str,
+    interval: float = typer.Option(20.0, "--interval", help="Polling interval in seconds."),
+    host: str = typer.Option(config.REMOTE_HOST, "--host", help="Remote SSH host."),
+    user: str = typer.Option(config.REMOTE_USER, "--user", help="Remote SSH user."),
+) -> None:
+    """
+    Watch Catena job status until it reaches a terminal state.
+    """
+
+    if interval <= 0:
+        emit_error("interval must be greater than zero", "invalid_input")
+        raise typer.Exit(code=2)
+
+    try:
+        validate_job_id(job_id)
+    except ValueError as exc:
+        emit_error(str(exc), "invalid_input")
+        raise typer.Exit(code=2) from exc
+
+    final_payload: dict[str, object] | None = None
+    final_returncode = 0
+
+    while True:
+        try:
+            result = run_ssh_command(
+                host=host,
+                user=user,
+                remote_args=[config.REMOTE_SERVER_CMD, "status", job_id],
+            )
+            payload = handle_remote_result(result)
+        except (OSError, ValueError, RuntimeError) as exc:
+            emit_error(str(exc), error_type_for_exception(exc))
+            raise typer.Exit(code=1) from exc
+
+        final_payload = payload
+        final_returncode = result.returncode
+
+        state = str(payload.get("state", "UNKNOWN"))
+        active = bool(payload.get("active", False))
+        message = payload.get("message")
+        detail = f" ({message})" if message else ""
+        typer.echo(f"{job_id}: {state}{detail}", err=True)
+
+        if result.returncode != 0 or not active:
+            break
+
+        time.sleep(interval)
+
+    emit_json(final_payload)
+    if final_returncode != 0:
+        raise typer.Exit(code=final_returncode)
