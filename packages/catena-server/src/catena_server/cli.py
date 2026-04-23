@@ -17,6 +17,7 @@ from catena_common.paths import get_job_paths
 from catena_server.bundle import bundle_metadata, create_job_bundle
 from catena_server.registry import create_job_layout, job_exists, read_state_json, write_state_json
 from catena_server.runners.cpp import build_cpp_slurm_body
+from catena_server.runners.delphes import build_delphes_slurm_body
 from catena_server.runners.python_run import build_python_slurm_body
 from catena_server.slurm import write_slurm_script
 
@@ -260,6 +261,8 @@ def infer_failure_reason(job_id: str, slurm_state: str | None = None) -> str:
         return "compile failed; see err.log"
     if "=== CPP RUN FAILED ===" in out_log:
         return "process exited nonzero"
+    if "=== DELPHES RUN FAILED ===" in out_log:
+        return "delphes failed; see err.log"
     if "=== PYTHON TASK FAILURE ===" in out_log:
         return "process exited nonzero"
 
@@ -309,6 +312,8 @@ def _build_runner_body(job_request: JobRequest) -> str:
         return build_python_slurm_body(job_request)
     if job_request.task_type.value == "cpp":
         return build_cpp_slurm_body(job_request)
+    if job_request.task_type.value == "delphes":
+        return build_delphes_slurm_body(job_request)
 
     msg = f"task_type '{job_request.task_type.value}' is not implemented"
     raise NotImplementedError(msg)

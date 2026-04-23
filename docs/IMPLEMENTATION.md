@@ -38,11 +38,11 @@ Implemented task types:
 
 - `python`
 - `cpp`
+- `delphes`
 
 Modeled but not implemented task types:
 
 - `mg5_pythia`
-- `delphes`
 - `sherpa`
 
 Input file modes:
@@ -257,9 +257,31 @@ g++ -O2 -std=c++17 main.cpp \
 After a successful compile, the runner executes `./job_exe` with request
 `cli_args` and copies newly created files from `inputs/` to `outputs/`.
 
+## Delphes Runner
+
+`catena_server.runners.delphes` builds a SLURM body for
+`task_type="delphes"`.
+
+The runner reads runner-specific values from `request.extra`:
+
+- `delphes_card`: safe relative card filename in `inputs/`.
+- `hepmc_file`: safe relative HepMC filename in `inputs/`.
+- `out_root`: safe relative output ROOT filename in `outputs/`, default
+  `output.root`.
+
+The runner activates the `DLPS` conda environment, verifies the card and HepMC
+input exist, verifies `DelphesHepMC2` is executable, and runs:
+
+```bash
+"$DELPHES_EXE" "$DELPHES_CARD" "$OUT_ROOT" "$HEPMC"
+```
+
+The ROOT output is written directly into `outputs/`. Original input files are
+left untouched.
+
 ## Known Limitations
 
-- Python and C++ jobs are executable today.
+- Python, C++, and Delphes jobs are executable today.
 - Python jobs copy newly created files from `inputs/` to `outputs/`, but this
   is a simple file comparison and not a full artifact manifest.
 - There is no retry or cancellation command yet.

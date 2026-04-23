@@ -33,6 +33,7 @@ packages/
       bundle.py       Zip bundle creation and checksum metadata.
       runners/
         cpp.py        C++ task SLURM body builder.
+        delphes.py    DelphesHepMC2 task SLURM body builder.
         python_run.py Python task SLURM body builder.
 ```
 
@@ -222,8 +223,8 @@ catena-server bundle example_python_job --no-inputs
 7. Runs `sbatch --parsable /scratch/au152/agent_job/{job_id}/slurm.sh`.
 8. Persists the returned SLURM job id and prints machine-readable JSON.
 
-Implemented task types are `python` and `cpp`. Other task types are modeled
-but return a clear not-implemented error.
+Implemented task types are `python`, `cpp`, and `delphes`. Other task types
+are modeled but return a clear not-implemented error.
 
 ## Python Runner Behavior
 
@@ -254,6 +255,18 @@ For C++ jobs, the generated SLURM body:
 - Runs `./job_exe` with `cli_args`.
 - Copies newly created files from `inputs/` into `outputs/`.
 - Leaves original input files in place.
+
+## Delphes Runner Behavior
+
+For Delphes jobs, request `extra` must include:
+
+- `delphes_card`: relative card filename under `inputs/`.
+- `hepmc_file`: relative HepMC filename under `inputs/`.
+- `out_root`: output ROOT filename under `outputs/`, default `output.root`.
+
+The generated SLURM body activates the `DLPS` conda environment, verifies the
+card and HepMC input exist, runs `DelphesHepMC2`, and writes the ROOT output
+directly into `outputs/`.
 
 ## Job Directory Layout
 
@@ -389,8 +402,8 @@ catena-server --help
 
 ## Not Implemented Yet
 
-- Real runner implementations for MG5+Pythia, Delphes, or Sherpa.
+- Real runner implementations for MG5+Pythia or Sherpa.
 - HTTP or daemon server mode.
 - SQLite or another database backend.
 - Artifact manifests beyond bundle zip creation.
-- Automatic runner-specific environment setup beyond the Python runner.
+- Automatic runner-specific environment setup beyond the implemented runners.
