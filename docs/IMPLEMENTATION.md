@@ -39,10 +39,10 @@ Implemented task types:
 - `python`
 - `cpp`
 - `delphes`
+- `mg5_pythia`
 
 Modeled but not implemented task types:
 
-- `mg5_pythia`
 - `sherpa`
 
 Input file modes:
@@ -283,9 +283,31 @@ input exist, verifies the selected executable is executable, and runs:
 The ROOT output is written directly into `outputs/`. Original input files are
 left untouched.
 
+## MG5 + Pythia Runner
+
+`catena_server.runners.mg5_pythia` builds a SLURM body for
+`task_type="mg5_pythia"`.
+
+The runner uses `entry_file` as a safe relative MG5 command file under
+`inputs/`. Optional `request.extra` settings are:
+
+- `mg5_exec`: executable override, defaulting to `catena_common.config.MG5_EXEC`.
+- `preserve_run_dir`: boolean flag, default `true`.
+
+The runner activates the `MG` conda environment, verifies the entry file and
+MG5 executable, then runs:
+
+```bash
+"$MG5_EXEC" "$ENTRY_FILE"
+```
+
+MG5-generated directories are not deleted. After a successful run, Catena
+copies common event/log artifacts into `outputs/mg5_artifacts/` while preserving
+their relative paths from `inputs/`.
+
 ## Known Limitations
 
-- Python, C++, and Delphes jobs are executable today.
+- Python, C++, Delphes, and MG5 + Pythia jobs are executable today.
 - Python jobs copy newly created files from `inputs/` to `outputs/`, but this
   is a simple file comparison and not a full artifact manifest.
 - There is no retry or cancellation command yet.

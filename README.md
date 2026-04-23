@@ -34,6 +34,7 @@ packages/
       runners/
         cpp.py        C++ task SLURM body builder.
         delphes.py    DelphesHepMC2/HepMC3 task SLURM body builder.
+        mg5_pythia.py MG5_aMC + Pythia task SLURM body builder.
         python_run.py Python task SLURM body builder.
 ```
 
@@ -225,8 +226,8 @@ catena-server bundle example_python_job --no-inputs
 7. Runs `sbatch --parsable /scratch/au152/agent_job/{job_id}/slurm.sh`.
 8. Persists the returned SLURM job id and prints machine-readable JSON.
 
-Implemented task types are `python`, `cpp`, and `delphes`. Other task types
-are modeled but return a clear not-implemented error.
+Implemented task types are `python`, `cpp`, `delphes`, and `mg5_pythia`.
+Other task types are modeled but return a clear not-implemented error.
 
 ## Python Runner Behavior
 
@@ -271,6 +272,21 @@ file to choose `DelphesHepMC2` or `DelphesHepMC3`. The generated SLURM body
 activates the `DLPS` conda environment, verifies the card and HepMC input
 exist, runs the selected executable, and writes the ROOT output directly into
 `outputs/`.
+
+## MG5 + Pythia Runner Behavior
+
+For MG5 + Pythia jobs, `entry_file` is the MG5 command file under `inputs/`.
+Optional `extra` values are:
+
+- `mg5_exec`: executable override, default
+  `/home/au152/Software/MG5_aMC_v3_5_8/bin/mg5_aMC`.
+- `preserve_run_dir`: boolean, default `true`.
+
+The generated SLURM body activates the `MG` conda environment, verifies the
+entry file and MG5 executable, runs `"$MG5_EXEC" "$ENTRY_FILE"`, leaves the
+generated MG5 directory tree in place, and copies key artifacts such as
+`*.hepmc`, `*.lhe`, banners, summaries, and logs into
+`outputs/mg5_artifacts/`.
 
 ## Job Directory Layout
 
@@ -406,7 +422,7 @@ catena-server --help
 
 ## Not Implemented Yet
 
-- Real runner implementations for MG5+Pythia or Sherpa.
+- Real runner implementations for Sherpa.
 - HTTP or daemon server mode.
 - SQLite or another database backend.
 - Artifact manifests beyond bundle zip creation.
