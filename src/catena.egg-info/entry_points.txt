@@ -1,3 +1,0 @@
-[console_scripts]
-catena-client = catena.client:app
-catena-server = catena.server:app
