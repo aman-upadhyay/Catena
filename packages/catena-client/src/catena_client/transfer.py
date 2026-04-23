@@ -38,6 +38,8 @@ def run_transfer_command(command: list[str], progress: bool) -> subprocess.Compl
     if not progress:
         return subprocess.run(command, capture_output=True, text=True, check=False)
 
+    # Forward transfer output live when requested, but keep final JSON output
+    # owned by the CLI command instead of rsync/scp.
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     stdout_chunks: list[str] = []
     stderr_chunks: list[str] = []

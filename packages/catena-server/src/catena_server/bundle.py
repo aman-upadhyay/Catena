@@ -42,6 +42,7 @@ def sha256_file(path: str | Path) -> str:
 
     digest = hashlib.sha256()
     with Path(path).open("rb") as file_handle:
+        # Read in chunks so large job bundles do not need to be loaded into RAM.
         for chunk in iter(lambda: file_handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()

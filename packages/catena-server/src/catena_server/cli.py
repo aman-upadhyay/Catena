@@ -371,6 +371,8 @@ def status(job_id: str) -> None:
     exit_code = 0
 
     if slurm_job_id:
+        # Active jobs usually appear in squeue. Completed jobs often disappear
+        # from squeue, so sacct is the fallback for historical terminal state.
         squeue_state, squeue_error = query_squeue(slurm_job_id)
         if squeue_state:
             state_record, current_state, message = _update_state_from_slurm(
@@ -398,6 +400,7 @@ def status(job_id: str) -> None:
                 if errors:
                     exit_code = 1
 
+    # Refresh last_update_time even when SLURM did not report a newer state.
     state_record = write_state_json(
         job_id,
         current_state,
@@ -460,6 +463,8 @@ def bundle(job_id: str) -> None:
         raise typer.Exit(code=1) from exc
     try:
         state_record = read_state_json(job_id)
+        # Bundles are created on demand, so state.json is updated here instead
+        # of during submit/status.
         write_state_json(
             job_id,
             state_record.state,

@@ -169,6 +169,8 @@ def write_state_json(
         created_at = existing_state.created_at
         if slurm_job_id is None:
             slurm_job_id = existing_state.slurm_job_id
+        # State writes are incremental. Preserve previously discovered metadata
+        # unless the caller explicitly provides newer information.
         if submit_time is None:
             submit_time = existing_state.submit_time
         if finish_time is None:
@@ -183,6 +185,8 @@ def write_state_json(
     if state in {JobState.COMPLETED, JobState.FAILED, JobState.CANCELLED} and finish_time is None:
         finish_time = timestamp
 
+    # `updated_at` keeps compatibility with the original state file. The newer
+    # `last_update_time` makes the status-polling meaning explicit.
     record = PersistedStateRecord(
         job_id=job_id,
         state=state,

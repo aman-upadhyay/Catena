@@ -269,6 +269,7 @@ def watch(
         active = bool(payload.get("active", False))
         message = payload.get("message")
         detail = f" ({message})" if message else ""
+        # Keep polling output on stderr so stdout remains one final JSON object.
         typer.echo(f"{job_id}: {state}{detail}", err=True)
 
         if result.returncode != 0 or not active:
