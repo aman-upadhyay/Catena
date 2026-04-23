@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Catena server CLI."
 requires-python = ">=3.11"
 dependencies = [
-  "catena-common @ file:../catena-common",
+  "pydantic>=2.0,<3.0",
   "typer>=0.12,<1.0",
 ]
 
@@ -16,7 +16,9 @@ dependencies = [
 catena-server = "catena_server.cli:app"
 
 [tool.setuptools]
-package-dir = {"" = "src"}
+packages = ["catena_server", "catena_server.runners", "catena_common"]
 
-[tool.setuptools.packages.find]
-where = ["src"]
+[tool.setuptools.package-dir]
+catena_server = "src/catena_server"
+"catena_server.runners" = "src/catena_server/runners"
+catena_common = "../catena-common/src/catena_common"

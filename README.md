@@ -1,4 +1,4 @@
 # Catena
 
-- Client: `pip install -e packages/catena-client`
-- Server: `pip install -e packages/catena-server`
+- Client: `python -m pip install -e packages/catena-client`
+- Server: `python -m pip install -e packages/catena-server`
