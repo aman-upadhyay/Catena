@@ -1,4 +1,4 @@
 # Catena
 
-- Pascal3: `pip install -e packages/catena-client`
-- Amarel: `pip install -e packages/catena-server`
+- Client: `pip install -e packages/catena-client`
+- Server: `pip install -e packages/catena-server`
