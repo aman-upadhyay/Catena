@@ -18,6 +18,9 @@ catena-client = "catena_client.cli:app"
 [tool.setuptools]
 packages = ["catena_client", "catena_common"]
 
+[tool.setuptools.package-data]
+catena_common = ["pythia8/Makefile.inc"]
+
 [tool.setuptools.package-dir]
 catena_client = "src/catena_client"
 catena_common = "../catena-common/src/catena_common"

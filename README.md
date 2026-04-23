@@ -35,6 +35,7 @@ packages/
         cpp.py        C++ task SLURM body builder.
         delphes.py    DelphesHepMC2/HepMC3 task SLURM body builder.
         mg5_pythia.py MG5_aMC + Pythia task SLURM body builder.
+        pythia8.py    Pythia8 C++ task SLURM body builder.
         python_run.py Python task SLURM body builder.
 ```
 
@@ -226,7 +227,8 @@ catena-server bundle example_python_job --no-inputs
 7. Runs `sbatch --parsable /scratch/au152/agent_job/{job_id}/slurm.sh`.
 8. Persists the returned SLURM job id and prints machine-readable JSON.
 
-Implemented task types are `python`, `cpp`, `delphes`, and `mg5_pythia`.
+Implemented task types are `python`, `cpp`, `delphes`, `mg5_pythia`, and
+`pythia8`.
 Other task types are modeled but return a clear not-implemented error.
 
 ## Python Runner Behavior
@@ -278,15 +280,43 @@ exist, runs the selected executable, and writes the ROOT output directly into
 For MG5 + Pythia jobs, `entry_file` is the MG5 command file under `inputs/`.
 Optional `extra` values are:
 
-- `mg5_exec`: executable override, default
-  `/home/au152/Software/MG5_aMC_v3_5_8/bin/mg5_aMC`.
+- `mg5_exec`: executable override, defaulting to `catena_common.config.MG5_EXEC`.
 - `preserve_run_dir`: boolean, default `true`.
 
 The generated SLURM body activates the `MG` conda environment, verifies the
-entry file and MG5 executable, runs `"$MG5_EXEC" "$ENTRY_FILE"`, leaves the
-generated MG5 directory tree in place, and copies key artifacts such as
-`*.hepmc`, `*.lhe`, banners, summaries, and logs into
-`outputs/mg5_artifacts/`.
+entry file and MG5 executable, then splits the MG5 command file into a process
+generation phase and a launch phase. After MG5 creates the process directory,
+Catena copies any uploaded `run_card.dat`, `pythia8_card.dat`, and
+`param_card.dat` from `inputs/` into `<process_dir>/Cards/` before launch.
+
+Use normal non-interactive MG5 launch syntax:
+
+```text
+output zj_smoke
+launch zj_smoke
+shower=Pythia8
+done
+```
+
+The runner strips interactive `-i` launch flags if present and ignores
+standalone uploaded-card path lines such as `./run_card.dat`; uploaded cards are
+applied by copying them into `Cards/`. MG5-generated directories are left in
+place, and key artifacts such as `*.hepmc`, `*.lhe`, banners, summaries, and
+logs are copied into `outputs/mg5_artifacts/` with relative paths preserved.
+
+## Pythia8 Runner Behavior
+
+For Pythia8 jobs, `entry_file` is a safe relative `.cc` source file under
+`inputs/`. Optional `extra` values are:
+
+- `binary_name`: output executable name, defaulting to the source file stem.
+- `make_target`: make target, defaulting to `binary_name`.
+
+The generated SLURM body activates the `DLPS` conda environment, copies the
+packaged `Makefile.inc` into `inputs/`, generates a local Makefile, runs
+`make <make_target>`, and then runs `./<binary_name> {cli_args...}`. The built
+binary and newly created files are copied into `outputs/`; original inputs are
+left in place.
 
 ## Job Directory Layout
 

@@ -18,6 +18,9 @@ catena-server = "catena_server.cli:app"
 [tool.setuptools]
 packages = ["catena_server", "catena_server.runners", "catena_common"]
 
+[tool.setuptools.package-data]
+catena_common = ["pythia8/Makefile.inc"]
+
 [tool.setuptools.package-dir]
 catena_server = "src/catena_server"
 "catena_server.runners" = "src/catena_server/runners"

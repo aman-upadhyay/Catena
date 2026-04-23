@@ -99,6 +99,7 @@ class TaskType(str, Enum):
 
     MG5_PYTHIA = "mg5_pythia"
     DELPHES = "delphes"
+    PYTHIA8 = "pythia8"
     SHERPA = "sherpa"
     CPP = "cpp"
     PYTHON = "python"

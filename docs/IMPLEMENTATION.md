@@ -40,6 +40,7 @@ Implemented task types:
 - `cpp`
 - `delphes`
 - `mg5_pythia`
+- `pythia8`
 
 Modeled but not implemented task types:
 
@@ -295,19 +296,42 @@ The runner uses `entry_file` as a safe relative MG5 command file under
 - `preserve_run_dir`: boolean flag, default `true`.
 
 The runner activates the `MG` conda environment, verifies the entry file and
-MG5 executable, then runs:
+MG5 executable, then splits the command file into two generated command files:
 
-```bash
-"$MG5_EXEC" "$ENTRY_FILE"
-```
+- a process-generation command file ending before the first `launch`.
+- a launch command file beginning at the first `launch`.
 
-MG5-generated directories are not deleted. After a successful run, Catena
-copies common event/log artifacts into `outputs/mg5_artifacts/` while preserving
-their relative paths from `inputs/`.
+This lets Catena run MG5 non-interactively while still applying uploaded cards
+at the correct time. After the generation phase creates the process directory,
+the runner copies uploaded `run_card.dat`, `pythia8_card.dat`, and
+`param_card.dat` from `inputs/` into `<process_dir>/Cards/`, then runs the
+launch phase. Interactive `launch ... -i` flags are stripped, and standalone
+uploaded-card path commands such as `./run_card.dat` are ignored because the
+cards are applied by copying them into `Cards/`.
+
+MG5-generated directories are not deleted. After a successful run, Catena copies
+common event/log artifacts into `outputs/mg5_artifacts/` while preserving their
+relative paths from `inputs/`.
+
+## Pythia8 Runner
+
+`catena_server.runners.pythia8` builds a SLURM body for `task_type="pythia8"`.
+
+The runner uses `entry_file` as a safe relative `.cc` source file under
+`inputs/`. Optional `request.extra` settings are:
+
+- `binary_name`: executable name, defaulting to the source file stem.
+- `make_target`: make target, defaulting to `binary_name`.
+
+The runner activates the `DLPS` conda environment, copies the packaged
+`catena_common/pythia8/Makefile.inc` into `inputs/`, generates a minimal local
+Makefile, runs `make <make_target>`, verifies the requested binary is
+executable, and runs `./<binary_name> {cli_args...}`. The built binary and newly
+created files from `inputs/` are copied into `outputs/`.
 
 ## Known Limitations
 
-- Python, C++, Delphes, and MG5 + Pythia jobs are executable today.
+- Python, C++, Delphes, MG5 + Pythia, and Pythia8 jobs are executable today.
 - Python jobs copy newly created files from `inputs/` to `outputs/`, but this
   is a simple file comparison and not a full artifact manifest.
 - There is no retry or cancellation command yet.

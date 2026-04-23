@@ -19,6 +19,7 @@ from catena_server.registry import create_job_layout, job_exists, read_state_jso
 from catena_server.runners.cpp import build_cpp_slurm_body
 from catena_server.runners.delphes import build_delphes_slurm_body, delphes_settings
 from catena_server.runners.mg5_pythia import build_mg5_pythia_slurm_body
+from catena_server.runners.pythia8 import build_pythia8_slurm_body
 from catena_server.runners.python_run import build_python_slurm_body
 from catena_server.slurm import write_slurm_script
 
@@ -266,6 +267,10 @@ def infer_failure_reason(job_id: str, slurm_state: str | None = None) -> str:
         return "delphes failed; see err.log"
     if "=== MG5 RUN FAILED ===" in out_log:
         return "mg5 failed; see err.log"
+    if "=== PYTHIA8 BUILD FAILED ===" in out_log:
+        return "pythia8 build failed; see err.log"
+    if "=== PYTHIA8 RUN FAILED ===" in out_log:
+        return "pythia8 process exited nonzero"
     if "=== PYTHON TASK FAILURE ===" in out_log:
         return "process exited nonzero"
 
@@ -319,6 +324,8 @@ def _build_runner_body(job_request: JobRequest) -> str:
         return build_delphes_slurm_body(job_request)
     if job_request.task_type.value == "mg5_pythia":
         return build_mg5_pythia_slurm_body(job_request)
+    if job_request.task_type.value == "pythia8":
+        return build_pythia8_slurm_body(job_request)
 
     msg = f"task_type '{job_request.task_type.value}' is not implemented"
     raise NotImplementedError(msg)
