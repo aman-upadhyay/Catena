@@ -15,6 +15,7 @@ from catena_common.paths import get_job_paths
 
 from catena_server.bundle import bundle_metadata, create_job_bundle
 from catena_server.registry import create_job_layout, job_exists, read_state_json, write_state_json
+from catena_server.runners.cpp import build_cpp_slurm_body
 from catena_server.runners.python_run import build_python_slurm_body
 from catena_server.slurm import write_slurm_script
 
@@ -239,6 +240,8 @@ def _build_runner_body(job_request: JobRequest) -> str:
 
     if job_request.task_type.value == "python":
         return build_python_slurm_body(job_request)
+    if job_request.task_type.value == "cpp":
+        return build_cpp_slurm_body(job_request)
 
     msg = f"task_type '{job_request.task_type.value}' is not implemented"
     raise NotImplementedError(msg)

@@ -37,13 +37,13 @@ The request and response models live in `catena_common.models`.
 Implemented task types:
 
 - `python`
+- `cpp`
 
 Modeled but not implemented task types:
 
 - `mg5_pythia`
 - `delphes`
 - `sherpa`
-- `cpp`
 
 Input file modes:
 
@@ -215,9 +215,33 @@ Server-side error categories:
 Some older response shapes are intentionally preserved. For example,
 submit/status still return the same `JobStatus` fields on success.
 
+## C++ Runner
+
+`catena_server.runners.cpp` builds a SLURM body for `task_type="cpp"`.
+
+The runner compiles from `WORKDIR/inputs` and writes the executable as
+`job_exe`. It logs the full compile command to stdout, while compiler stderr
+flows to the SLURM `err.log` path. A compile failure exits nonzero immediately,
+which lets SLURM and Catena status mark the job as failed.
+
+The compile pattern is:
+
+```bash
+g++ -O2 -std=c++17 main.cpp \
+    $(root-config --cflags) \
+    -I"$CONDA_PREFIX/include" -L"$CONDA_PREFIX/lib" \
+    -Wl,-rpath,$CONDA_PREFIX/lib \
+    $(root-config --libs) \
+    -lDelphes -lcnpy -lz \
+    -o job_exe
+```
+
+After a successful compile, the runner executes `./job_exe` with request
+`cli_args` and copies newly created files from `inputs/` to `outputs/`.
+
 ## Known Limitations
 
-- Only Python jobs are executable today.
+- Python and C++ jobs are executable today.
 - Python jobs copy newly created files from `inputs/` to `outputs/`, but this
   is a simple file comparison and not a full artifact manifest.
 - There is no retry or cancellation command yet.

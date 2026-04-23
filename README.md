@@ -32,6 +32,7 @@ packages/
       slurm.py        SLURM script rendering.
       bundle.py       Zip bundle creation and checksum metadata.
       runners/
+        cpp.py        C++ task SLURM body builder.
         python_run.py Python task SLURM body builder.
 ```
 
@@ -218,8 +219,8 @@ catena-server bundle example_python_job
 7. Runs `sbatch --parsable /scratch/au152/agent_job/{job_id}/slurm.sh`.
 8. Persists the returned SLURM job id and prints machine-readable JSON.
 
-Only `task_type="python"` is implemented. Other task types are modeled but
-return a clear not-implemented error.
+Implemented task types are `python` and `cpp`. Other task types are modeled
+but return a clear not-implemented error.
 
 ## Python Runner Behavior
 
@@ -231,6 +232,23 @@ For Python jobs, the generated SLURM body:
 - Changes directory into `WORKDIR/inputs`.
 - Runs `python {entry_file} {cli_args...}` with shell-safe quoting.
 - Prints success or failure markers.
+- Copies newly created files from `inputs/` into `outputs/`.
+- Leaves original input files in place.
+
+## C++ Runner Behavior
+
+For C++ jobs, the generated SLURM body:
+
+- Defines `WORKDIR`, `INPUTS_DIR`, and `OUTPUTS_DIR`.
+- Sources the configured conda initialization script.
+- Activates the `Catena` conda environment.
+- Changes directory into `WORKDIR/inputs`.
+- Compiles `entry_file` to `job_exe` with `g++ -O2 -std=c++17`.
+- Uses `root-config`, `CONDA_PREFIX/include`, `CONDA_PREFIX/lib`, and links
+  `Delphes`, `cnpy`, and `z`.
+- Prints the full compile command before running it.
+- Preserves compiler stderr in `err.log` through the normal SLURM stderr path.
+- Runs `./job_exe` with `cli_args`.
 - Copies newly created files from `inputs/` into `outputs/`.
 - Leaves original input files in place.
 
@@ -349,7 +367,7 @@ catena-server --help
 
 ## Not Implemented Yet
 
-- Real runner implementations for MG5+Pythia, Delphes, Sherpa, or C++.
+- Real runner implementations for MG5+Pythia, Delphes, or Sherpa.
 - HTTP or daemon server mode.
 - SQLite or another database backend.
 - Artifact manifests beyond bundle zip creation.
