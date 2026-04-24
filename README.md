@@ -8,91 +8,127 @@ The current implementation is intentionally file-based and CLI-driven. There
 is no HTTP service and no database backend. Job state, staging, and bundles are
 managed directly on the filesystem through the client and server CLIs.
 
+## What Catena Does
+
+Catena provides a thin CLI workflow for:
+
+- staging files on Amarel
+- submitting validated job requests over SSH
+- generating SLURM scripts on the server
+- polling status and failure reasons
+- bundling and fetching results
+- managing job directories and staging areas
+
+Implemented task types:
+
+- `python`
+- `cpp`
+- `delphes`
+- `mg5_pythia`
+- `pythia8`
+
 ## Repository Layout
 
 ```text
 packages/
-  catena-common/
-    src/catena_common/
-      config.py       Shared constants for paths, conda envs, SLURM defaults, SSH defaults.
-      jsonio.py       Small JSON read/write helpers.
-      models.py       Pydantic v2 request/status/input models and validators.
-      paths.py        Job, bundle, and staging path helpers.
+  catena-common/   Shared models, config, JSON helpers, and path helpers
+  catena-client/   Client CLI used from Pascal3 or another login node
+  catena-server/   Server CLI used on Amarel
 
-  catena-client/
-    src/catena_client/
-      cli.py          Local Typer CLI used from Pascal3 or another login node.
-      ssh.py          SSH command execution and remote JSON parsing.
-      transfer.py     rsync/scp upload and fetch helpers.
-
-  catena-server/
-    src/catena_server/
-      cli.py          Remote Typer CLI used on Amarel.
-      registry.py     File-based job registry and state persistence.
-      slurm.py        SLURM script rendering.
-      bundle.py       Zip bundle creation and checksum metadata.
-      runners/
-        cpp.py        C++ task SLURM body builder.
-        delphes.py    DelphesHepMC2/HepMC3 task SLURM body builder.
-        mg5_pythia.py MG5_aMC + Pythia task SLURM body builder.
-        pythia8.py    Pythia8 C++ task SLURM body builder.
-        python_run.py Python task SLURM body builder.
+docs/
+  USER_GUIDE.md    Detailed user-facing workflow and command reference
+  JOB_TEMPLATES.md End-to-end submit templates for every implemented task type
+  IMPLEMENTATION.md Internal implementation notes and behavior details
+  USAGE_SPEC.yaml  Machine-readable usage spec for agents and automation
 ```
 
 ## Installation
 
-Install exactly one role package on each machine. The shared `catena_common`
-package is included by each role target, so you do not manually install it.
+Install exactly one role package per machine. Each role includes the shared
+`catena_common` package, so there is no separate common install step.
 
-Pascal3 or client machine:
+Pascal3 or another client machine:
 
 ```bash
 python -m pip install -e packages/catena-client
 ```
 
-Amarel or server machine:
+Amarel or the server-side environment:
 
 ```bash
 python -m pip install -e packages/catena-server
 ```
 
-## Fixed Runtime Paths
+## Quick Start
 
-Catena currently uses static Rutgers/Amarel paths from
-`catena_common.config`.
+1. Upload any large input files to the staging area:
 
-```text
-Job root:       /scratch/au152/agent_job
-Stage root:     /scratch/au152/catena_stage
-Remote host:    amarel.rutgers.edu
-Remote user:    au152
-Remote server:  /home/au152/Software/miniconda3/envs/Catena/bin/catena-server
-Conda source:   /home/au152/Software/miniconda3/etc/profile.d/conda.sh
-Python env:     Catena
-Delphes HepMC2: /home/au152/Software/miniconda3/envs/DLPS/bin/DelphesHepMC2
-Delphes HepMC3: /home/au152/Software/miniconda3/envs/DLPS/bin/DelphesHepMC3
+```bash
+catena-client upload my_job input.dat extra.dat
 ```
 
-SLURM defaults:
+2. Submit a validated request JSON:
 
-```text
-partition=main
-requeue=True
-nodes=1
-ntasks=1
-cpus_per_task=50
-mem_mb=50000
-time=70:00:00
-array=1
+```bash
+catena-client submit request.json
 ```
 
-## Job Request Format
+3. Watch until the job reaches a terminal state:
 
-A request is JSON validated by Pydantic v2. `job_id` may contain only letters,
-numbers, underscores, and dashes. `entry_file` must be relative. Input names
-must be safe relative paths with no `..`.
+```bash
+catena-client watch my_job
+```
 
-Minimal inline Python job:
+4. Fetch the result bundle:
+
+```bash
+catena-client fetch my_job
+catena-client fetch my_job --include-inputs
+```
+
+By default, `fetch` uses `--no-inputs` so the downloaded bundle excludes the
+staged `inputs/` tree unless you explicitly ask for it.
+
+## Common Commands
+
+Client-side:
+
+```bash
+catena-client submit request.json
+catena-client status JOB_ID
+catena-client jobs
+catena-client watch JOB_ID --interval 10
+catena-client upload JOB_ID FILE [FILE ...]
+catena-client fetch JOB_ID [--include-inputs]
+catena-client delete JOB_ID [--force-cancel]
+catena-client stages
+catena-client stage-tree JOB_ID [--depth 2]
+catena-client clear-stage JOB_ID
+```
+
+Server-side:
+
+```bash
+catena-server submit request.json
+catena-server status JOB_ID
+catena-server bundle JOB_ID [--no-inputs]
+catena-server jobs
+catena-server delete JOB_ID [--force-cancel]
+catena-server stages
+catena-server stage-tree JOB_ID [--depth 2]
+catena-server clear-stage JOB_ID
+```
+
+## Request Model Summary
+
+Requests are JSON validated by Pydantic v2.
+
+- `job_id` allows only letters, numbers, `_`, and `-`
+- `entry_file` must be relative
+- input names must be safe relative paths with no `..`
+- input modes are `inline`, `uploaded`, and `server_path`
+
+Minimal example:
 
 ```json
 {
@@ -111,438 +147,19 @@ Minimal inline Python job:
 }
 ```
 
-Large staged input reference:
+## Documentation
 
-```json
-{
-  "job_id": "large_input_job",
-  "task_type": "python",
-  "entry_file": "run.py",
-  "input_files": [
-    {"name": "run.py", "mode": "inline", "content_b64": "cHJpbnQoJ29rJykK"},
-    {"name": "events.hepmc", "mode": "uploaded"}
-  ]
-}
-```
+Use these docs depending on what you need:
 
-Server-side file reference:
+- [docs/USER_GUIDE.md](docs/USER_GUIDE.md): full user guide, command behavior, paths, bundles, states, and management workflows
+- [docs/JOB_TEMPLATES.md](docs/JOB_TEMPLATES.md): submission templates for `python`, `cpp`, `delphes`, `mg5_pythia`, and `pythia8`
+- [docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md): implementation details and current design notes
+- [docs/USAGE_SPEC.yaml](docs/USAGE_SPEC.yaml): machine-readable usage spec for agents, automation, and tooling
 
-```json
-{
-  "job_id": "server_file_job",
-  "task_type": "python",
-  "entry_file": "run.py",
-  "input_files": [
-    {"name": "input.dat", "mode": "server_path", "path": "/scratch/au152/data/input.dat"}
-  ]
-}
-```
+## Notes
 
-## Client Commands
-
-Run these from the client machine.
-
-Submit a request over SSH. The client sends the request JSON through stdin to
-the remote server command, so it does not rely on the remote non-interactive
-shell PATH.
-
-```bash
-catena-client submit request.json
-```
-
-Check status:
-
-```bash
-catena-client status example_python_job
-```
-
-List jobs in a compact table:
-
-```bash
-catena-client jobs
-```
-
-Watch until terminal state. Intermediate status lines go to stderr. The final
-machine-readable JSON response is printed once to stdout.
-
-```bash
-catena-client watch example_python_job
-catena-client watch example_python_job --interval 10
-```
-
-Upload large files to the server-side staging area before submit:
-
-```bash
-catena-client upload large_input_job events.hepmc weights.dat
-```
-
-Fetch a completed job bundle. This remotely runs
-`catena-server bundle JOB_ID` first, then copies the zip back using rsync if
-available or scp as fallback. By default the client requests `--no-inputs` so
-large or staged input files are not downloaded again.
-
-```bash
-catena-client fetch example_python_job
-catena-client fetch example_python_job --dest results/example_python_job.zip
-catena-client fetch example_python_job --include-inputs
-```
-
-Delete a job, optionally cancelling an active SLURM job first:
-
-```bash
-catena-client delete example_python_job
-catena-client delete example_python_job --force-cancel
-```
-
-List staging areas, inspect a tree, or clear a stage:
-
-```bash
-catena-client stages
-catena-client stage-tree large_input_job
-catena-client stage-tree large_input_job --depth 1
-catena-client clear-stage large_input_job
-```
-
-Use `--host` and `--user` on client commands to override the default SSH
-target. `upload` and `fetch` also support `--progress/--no-progress`; progress
-output is sent to stderr only.
-
-## Server Commands
-
-Run these on Amarel, normally through the absolute remote executable path used
-by the client.
-
-Submit a request file:
-
-```bash
-catena-server submit request.json
-```
-
-Submit from stdin:
-
-```bash
-cat request.json | catena-server submit -
-```
-
-Check status:
-
-```bash
-catena-server status example_python_job
-```
-
-List jobs:
-
-```bash
-catena-server jobs
-```
-
-Delete a job directory:
-
-```bash
-catena-server delete example_python_job
-catena-server delete example_python_job --force-cancel
-```
-
-List staging areas, inspect one, or clear it:
-
-```bash
-catena-server stages
-catena-server stage-tree large_input_job
-catena-server clear-stage large_input_job
-```
-
-Create or refresh a bundle:
-
-```bash
-catena-server bundle example_python_job
-catena-server bundle example_python_job --no-inputs
-```
-
-## What Submit Does
-
-`catena-server submit` performs these steps:
-
-1. Loads and validates the JSON request.
-2. Rejects duplicate `job_id` values if the final job directory already exists.
-3. Creates the job layout under `/scratch/au152/agent_job/{job_id}`.
-4. Persists `job.json` and initializes `state.json`.
-5. Materializes input files into `inputs/`.
-6. Builds a SLURM script for supported task types.
-7. Runs `sbatch --parsable /scratch/au152/agent_job/{job_id}/slurm.sh`.
-8. Persists the returned SLURM job id and prints machine-readable JSON.
-
-Implemented task types are `python`, `cpp`, `delphes`, `mg5_pythia`, and
-`pythia8`.
-Other task types are modeled but return a clear not-implemented error.
-
-## Python Runner Behavior
-
-For Python jobs, the generated SLURM body:
-
-- Defines `WORKDIR`, `INPUTS_DIR`, and `OUTPUTS_DIR`.
-- Sources the configured conda initialization script.
-- Activates the `Catena` conda environment.
-- Changes directory into `WORKDIR/inputs`.
-- Runs `python {entry_file} {cli_args...}` with shell-safe quoting.
-- Prints success or failure markers.
-- Copies newly created files from `inputs/` into `outputs/`.
-- Leaves original input files in place.
-
-## C++ Runner Behavior
-
-For C++ jobs, the generated SLURM body:
-
-- Defines `WORKDIR`, `INPUTS_DIR`, and `OUTPUTS_DIR`.
-- Sources the configured conda initialization script.
-- Activates the `Catena` conda environment.
-- Changes directory into `WORKDIR/inputs`.
-- Compiles `entry_file` to `job_exe` with `g++ -O2 -std=c++17`.
-- Uses `root-config`, `CONDA_PREFIX/include`, `CONDA_PREFIX/lib`, and links
-  `Delphes`, `cnpy`, and `z`.
-- Prints the full compile command before running it.
-- Preserves compiler stderr in `err.log` through the normal SLURM stderr path.
-- Runs `./job_exe` with `cli_args`.
-- Copies newly created files from `inputs/` into `outputs/`.
-- Leaves original input files in place.
-
-## Delphes Runner Behavior
-
-For Delphes jobs, request `extra` must include:
-
-- `delphes_card`: relative card filename under `inputs/`.
-- `hepmc_file`: relative HepMC filename under `inputs/`.
-- `out_root`: output ROOT filename under `outputs/`, default `output.root`.
-
-Before writing `slurm.sh`, Catena reads the first 5 lines of the staged HepMC
-file to choose `DelphesHepMC2` or `DelphesHepMC3`. The generated SLURM body
-activates the `DLPS` conda environment, verifies the card and HepMC input
-exist, runs the selected executable, and writes the ROOT output directly into
-`outputs/`.
-
-## MG5 + Pythia Runner Behavior
-
-For MG5 + Pythia jobs, `entry_file` is the MG5 command file under `inputs/`.
-Optional `extra` values are:
-
-- `mg5_exec`: executable override, defaulting to `catena_common.config.MG5_EXEC`.
-- `preserve_run_dir`: boolean, default `true`.
-
-The generated SLURM body activates the `MG` conda environment, verifies the
-entry file and MG5 executable, then splits the MG5 command file into a process
-generation phase and a launch phase. After MG5 creates the process directory,
-Catena copies any uploaded `run_card.dat`, `pythia8_card.dat`, and
-`param_card.dat` from `inputs/` into `<process_dir>/Cards/` before launch.
-
-Use normal non-interactive MG5 launch syntax:
-
-```text
-output zj_smoke
-launch zj_smoke
-shower=Pythia8
-done
-```
-
-The runner strips interactive `-i` launch flags if present and ignores
-standalone uploaded-card path lines such as `./run_card.dat`; uploaded cards are
-applied by copying them into `Cards/`. MG5-generated directories are left in
-place, and key artifacts such as `*.hepmc`, `*.lhe`, banners, summaries, and
-logs are copied into `outputs/mg5_artifacts/` with relative paths preserved.
-
-## Pythia8 Runner Behavior
-
-For Pythia8 jobs, `entry_file` is a safe relative `.cc` source file under
-`inputs/`. Optional `extra` values are:
-
-- `binary_name`: output executable name, defaulting to the source file stem.
-- `make_target`: make target, defaulting to `binary_name`.
-- `use_lhapdf`: explicit LHAPDF enable/disable override.
-- `lhapdf_sets`: explicit LHAPDF set-name list override.
-- `auto_install_lhapdf`: default `true`; disable only to force a hard fail when
-  a required set is missing.
-- `lhapdf_data_path`: explicit absolute override for `LHAPDF_DATA_PATH`.
-
-The generated SLURM body activates the `DLPS` conda environment, copies the
-packaged `Makefile.inc` into `inputs/`, generates a local Makefile, runs
-`make <make_target>`, and then runs `./<binary_name> {cli_args...}`. The built
-binary and newly created files are copied into `outputs/`; original inputs are
-left in place. When LHAPDF use is inferred or explicitly enabled, Catena sets
-`LHAPDF_DATA_PATH`, checks the requested or inferred PDF sets, auto-installs
-missing sets by default, and records clearer LHAPDF-related failure reasons in
-status/watch output.
-
-## Management Commands
-
-The job and stage management commands are split cleanly:
-
-- Server commands always return machine-readable JSON.
-- Client commands render tables or tree output locally after SSHing to the
-  server.
-
-`catena-server jobs` and `catena-client jobs` report compact metadata:
-
-- `job_id`
-- `task_type`
-- `state`
-- `submit_time`
-- `finish_time`
-- `last_update_time`
-- `message`
-- `failure_reason`
-
-`catena-server stages` and `catena-client stages` report compact staging
-metadata:
-
-- `stage_id`
-- `modified_time`
-- `file_count`
-- `total_size_bytes`
-
-`stage-tree` returns a pruned tree view to the requested depth, default `2`.
-
-## Job Directory Layout
-
-Each job gets:
-
-```text
-/scratch/au152/agent_job/{job_id}/
-  inputs/
-  outputs/
-  bundle/
-  job.json
-  state.json
-  slurm.sh
-  out.log
-  err.log
-```
-
-The bundle zip is written to:
-
-```text
-/scratch/au152/agent_job/{job_id}/bundle/{job_id}.zip
-```
-
-Staged uploads are kept separate until submit:
-
-```text
-/scratch/au152/catena_stage/{job_id}/
-```
-
-## State and Status
-
-`state.json` is the file-based source of truth for local Catena state. It
-stores:
-
-- `job_id`
-- `state`
-- `active`
-- `slurm_job_id`
-- `job_dir`
-- `message`
-- `created_at`
-- `updated_at`
-- `submit_time`
-- `finish_time`
-- `last_update_time`
-- `final_slurm_state`
-- `bundle_path`
-- `failure_reason`
-- `exit_code`
-
-`catena-server status` reads the local state, queries `squeue` first, then
-queries `sacct` if the job is no longer visible in `squeue`. SLURM states are
-mapped into Catena states:
-
-```text
-PENDING   -> PENDING
-RUNNING   -> RUNNING
-COMPLETED -> COMPLETED
-FAILED    -> FAILED
-CANCELLED -> CANCELLED
-TIMEOUT   -> FAILED
-unknown   -> UNKNOWN
-```
-
-Active states are `SUBMITTED`, `PENDING`, and `RUNNING`.
-
-When a job fails, `status` includes a short `failure_reason` when Catena can
-infer one. Runner markers are preferred over generic SLURM states, for example
-`compile failed; see err.log` or `process exited nonzero`. If no runner marker
-is available, Catena reports a generic SLURM failure reason.
-
-## Bundle Metadata
-
-`catena-server bundle JOB_ID` zips the job directory while avoiding recursive
-inclusion of the zip itself. By default it includes `inputs/`; pass
-`--no-inputs` to omit input files. The response includes:
-
-```json
-{
-  "job_id": "example_python_job",
-  "job_dir": "/scratch/au152/agent_job/example_python_job",
-  "zip_path": "/scratch/au152/agent_job/example_python_job/bundle/example_python_job.zip",
-  "zip_size_bytes": 12345,
-  "zip_sha256": "64_character_sha256_hex_digest",
-  "message": "bundle created"
-}
-```
-
-## Error Handling
-
-Commands print machine-readable JSON on stdout. On failure, commands exit
-nonzero and include a `message`. Where practical, errors also include an
-`error_type`, such as:
-
-```text
-invalid_input
-job_id_exists
-ssh_failure
-remote_response_error
-transfer_failure
-state_read_failure
-```
-
-Duplicate submit attempts return JSON like:
-
-```json
-{
-  "error_type": "job_id_exists",
-  "job_id": "example_python_job",
-  "message": "job_id 'example_python_job' already exists at /scratch/au152/agent_job/example_python_job"
-}
-```
-
-Transfer progress, watch updates, and SSH transfer progress are kept on stderr
-so stdout remains parseable JSON.
-
-## Development Checks
-
-Useful local checks:
-
-```bash
-python -m py_compile packages/catena-common/src/catena_common/*.py \
-  packages/catena-client/src/catena_client/*.py \
-  packages/catena-server/src/catena_server/*.py \
-  packages/catena-server/src/catena_server/runners/*.py
-
-PYTHONPATH=packages/catena-common/src:packages/catena-client/src:packages/catena-server/src \
-  python -c "import catena_common, catena_client.cli, catena_server.cli; print('ok')"
-
-catena-client --help
-catena-server --help
-```
-
-## Not Implemented Yet
-
-- Real runner implementations for Sherpa.
-- HTTP or daemon server mode.
-- SQLite or another database backend.
-- Artifact manifests beyond bundle zip creation.
-- Retry/resubmit workflows for failed jobs.
-
-## Machine-Readable Usage Spec
-
-For agent-oriented usage details, see:
-
-```text
-docs/USAGE_SPEC.yaml
-```
+- Client/server communication is SSH-based; there is no HTTP service.
+- Server commands emit machine-readable JSON.
+- Client commands either forward JSON or render compact tables and trees locally.
+- Transfer progress and watch updates go to `stderr`, keeping `stdout` parseable.
+- Job state, staging, and bundles are file-based; there is no database backend yet.
