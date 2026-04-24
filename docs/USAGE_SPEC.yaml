@@ -318,13 +318,14 @@ task_types:
       - "activate DLPS env"
       - "write ROOT output directly into outputs/"
   mg5_pythia:
-    purpose: "run MG5_aMC generation and launch phases non-interactively"
+    purpose: "run MG5_aMC generation and launch phases non-interactively; Pythia showering is optional"
     extra:
       mg5_exec: "optional executable override"
       preserve_run_dir: "optional bool, default true"
     behavior:
       - "split command file into generate and launch phases"
-      - "copy uploaded run_card.dat, pythia8_card.dat, param_card.dat into <process_dir>/Cards/"
+      - "copy uploaded run_card.dat, pythia8_card.dat, param_card.dat into <process_dir>/Cards/ as full replacements"
+      - "run MG5-only jobs when the command file does not request shower=Pythia8"
       - "preserve generated MG5 directories"
       - "copy common artifacts into outputs/mg5_artifacts/"
   pythia8:

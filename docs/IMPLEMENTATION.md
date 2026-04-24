@@ -334,6 +334,12 @@ launch phase. Interactive `launch ... -i` flags are stripped, and standalone
 uploaded-card path commands such as `./run_card.dat` are ignored because the
 cards are applied by copying them into `Cards/`.
 
+Uploaded card files are full replacements for the MG5-generated files, not
+patches. Partial snippets such as a one-line `run_card.dat` can break launch
+because they replace the complete generated card. Despite the task type name,
+Pythia showering is optional; an MG5-only command file is valid when the launch
+block does not request `shower=Pythia8`.
+
 MG5-generated directories are not deleted. After a successful run, Catena copies
 common event/log artifacts into `outputs/mg5_artifacts/` while preserving their
 relative paths from `inputs/`.

@@ -432,7 +432,7 @@ Implemented:
 - `python`
 - `cpp`
 - `delphes`
-- `mg5_pythia`
+- `mg5_pythia` (MG5-only runs are also valid; omit `shower=Pythia8`)
 - `pythia8`
 
 See [Job Templates](JOB_TEMPLATES.md) for complete examples.

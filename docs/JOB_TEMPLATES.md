@@ -163,6 +163,9 @@ catena-client fetch delphes_demo01
 
 ### Example `gen_mg5.txt`
 
+This task type can also run MG5 without Pythia. To run an MG5-only job, omit
+the `shower=Pythia8` line from the launch block.
+
 ```text
 import model sm
 generate p p > z j
@@ -172,17 +175,11 @@ shower=Pythia8
 done
 ```
 
-### Example `run_card.dat`
-
-```text
-1000 = nevents
-```
-
-### Example `pythia8_card.dat`
-
-```text
-Main:numberOfEvents = 1000
-```
+Uploaded `run_card.dat`, `pythia8_card.dat`, and `param_card.dat` files are
+copied over the MG5-generated files in `<process_dir>/Cards/`. Only upload
+complete valid card files, usually copied from an MG5-generated process and
+edited. Do not upload short partial snippets such as only `1000 = nevents`;
+that would replace the full generated card.
 
 ### Example `request.json`
 
@@ -196,14 +193,6 @@ Main:numberOfEvents = 1000
     {
       "name": "gen_mg5.txt",
       "mode": "uploaded"
-    },
-    {
-      "name": "run_card.dat",
-      "mode": "uploaded"
-    },
-    {
-      "name": "pythia8_card.dat",
-      "mode": "uploaded"
     }
   ],
   "extra": {}
@@ -213,7 +202,7 @@ Main:numberOfEvents = 1000
 ### Upload
 
 ```bash
-catena-client upload mg5_demo01 gen_mg5.txt run_card.dat pythia8_card.dat
+catena-client upload mg5_demo01 gen_mg5.txt
 ```
 
 ### Submit
