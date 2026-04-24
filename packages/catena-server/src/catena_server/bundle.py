@@ -24,6 +24,8 @@ def _iter_bundle_members(job_paths: JobPaths, include_inputs: bool = True) -> li
 
     members: list[Path] = []
     for path in sorted(job_paths.job_dir.rglob("*")):
+        if path.is_symlink():
+            continue
         if not path.is_file():
             continue
         if path.resolve() == job_paths.zip_path.resolve():

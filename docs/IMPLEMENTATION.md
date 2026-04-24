@@ -58,7 +58,7 @@ Input file modes:
 Important validators:
 
 - `job_id` must match letters, numbers, underscore, and dash only.
-- `entry_file` must not be absolute.
+- `entry_file`, when used by a runner, must be a safe relative path and must not contain `..`.
 - input names must be safe relative paths and must not contain `..`.
 
 ## Server Submit Flow

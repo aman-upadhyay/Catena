@@ -41,6 +41,8 @@ def run_transfer_command(command: list[str], progress: bool) -> subprocess.Compl
     # Forward transfer output live when requested, but keep final JSON output
     # owned by the CLI command instead of rsync/scp.
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if process.stdout is None or process.stderr is None:
+        raise TransferError("transfer process did not expose output streams")
     stdout_chunks: list[str] = []
     stderr_chunks: list[str] = []
 

@@ -124,7 +124,7 @@ catena-server clear-stage JOB_ID
 Requests are JSON validated by Pydantic v2.
 
 - `job_id` allows only letters, numbers, `_`, and `-`
-- `entry_file` must be relative
+- `entry_file`, when used by a runner, must be a safe relative path with no `..`
 - input names must be safe relative paths with no `..`
 - input modes are `inline`, `uploaded`, and `server_path`
 

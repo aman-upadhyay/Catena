@@ -421,7 +421,7 @@ def _stage_listing_entry(stage_dir: Path) -> dict[str, object]:
             file_count += 1
             total_size_bytes += path.stat().st_size
         modified_time = _iso_utc_from_timestamp(stage_dir.stat().st_mtime)
-    except OSError as exc:
+    except OSError:
         modified_time = ""
 
     return {

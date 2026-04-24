@@ -5,7 +5,7 @@ from __future__ import annotations
 import shlex
 
 from catena_common import config
-from catena_common.models import JobRequest
+from catena_common.models import JobRequest, validate_safe_relative_name
 from catena_common.paths import get_job_paths
 
 DEFAULT_CPP_EXE = "job_exe"
@@ -50,7 +50,8 @@ def build_cpp_slurm_body(job_request: JobRequest) -> str:
         raise ValueError(msg)
 
     job_paths = get_job_paths(job_request.job_id)
-    compile_command = render_cpp_compile_command(job_request.entry_file)
+    entry_file = validate_safe_relative_name(job_request.entry_file)
+    compile_command = render_cpp_compile_command(entry_file)
     run_command = render_cpp_run_command(job_request)
     lines = [
         f"WORKDIR={shlex.quote(str(job_paths.job_dir))}",

@@ -103,7 +103,7 @@ Requests are validated by `catena_common.models.JobRequest`.
 Rules:
 
 - `job_id` may only contain letters, numbers, underscores, and dashes.
-- `entry_file` must be relative.
+- `entry_file`, when used by a runner, must be a safe relative path.
 - input file names must be safe relative paths.
 - no `..` path traversal.
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import shlex
 
 from catena_common import config
-from catena_common.models import JobRequest
+from catena_common.models import JobRequest, validate_safe_relative_name
 from catena_common.paths import get_job_paths
 
 
@@ -21,7 +21,8 @@ def render_python_command(job_request: JobRequest) -> str:
     if not job_request.entry_file:
         msg = "python tasks require entry_file"
         raise ValueError(msg)
-    return shell_join(["python", job_request.entry_file, *job_request.cli_args])
+    entry_file = validate_safe_relative_name(job_request.entry_file)
+    return shell_join(["python", entry_file, *job_request.cli_args])
 
 
 def build_python_slurm_body(job_request: JobRequest) -> str:
