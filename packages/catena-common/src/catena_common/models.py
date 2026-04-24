@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 JOB_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 SAFE_PATH_SEGMENT_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
 
-ExtraValue = str | int | float | bool
+ExtraValue = str | int | float | bool | None | list[str]
 
 
 def is_safe_job_id(value: str) -> bool:

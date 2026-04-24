@@ -174,6 +174,11 @@ def upload(
 def fetch(
     job_id: str,
     dest: str | None = typer.Option(None, "--dest", help="Local destination path for the fetched zip."),
+    include_inputs: bool = typer.Option(
+        False,
+        "--include-inputs/--no-inputs",
+        help="Include staged input files in the fetched bundle.",
+    ),
     progress: bool | None = typer.Option(None, "--progress/--no-progress", help="Show transfer progress on stderr."),
     host: str = typer.Option(config.REMOTE_HOST, "--host", help="Remote SSH host."),
     user: str = typer.Option(config.REMOTE_USER, "--user", help="Remote SSH user."),
@@ -192,10 +197,23 @@ def fetch(
 
     try:
         progress_enabled = resolve_progress_option(progress)
+        if include_inputs:
+            typer.echo(
+                "Fetch mode: inputs included. Use --no-inputs to exclude staged input files.",
+                err=True,
+            )
+        else:
+            typer.echo(
+                "Fetch mode: inputs not included. Use --include-inputs to include staged input files.",
+                err=True,
+            )
+        remote_args = [config.REMOTE_SERVER_CMD, "bundle", job_id]
+        if not include_inputs:
+            remote_args.append("--no-inputs")
         result = run_ssh_command(
             host=host,
             user=user,
-            remote_args=[config.REMOTE_SERVER_CMD, "bundle", job_id, "--no-inputs"],
+            remote_args=remote_args,
         )
         payload = handle_remote_result(result)
         remote_zip_path = payload["zip_path"]

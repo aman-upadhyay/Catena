@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import sys
 import subprocess
 from dataclasses import dataclass
@@ -19,7 +20,7 @@ from catena_server.registry import create_job_layout, job_exists, read_state_jso
 from catena_server.runners.cpp import build_cpp_slurm_body
 from catena_server.runners.delphes import build_delphes_slurm_body, delphes_settings
 from catena_server.runners.mg5_pythia import build_mg5_pythia_slurm_body
-from catena_server.runners.pythia8 import build_pythia8_slurm_body
+from catena_server.runners.pythia8 import build_pythia8_slurm_body, pythia8_settings
 from catena_server.runners.python_run import build_python_slurm_body
 from catena_server.slurm import write_slurm_script
 
@@ -254,11 +255,28 @@ def _read_text_if_exists(path: Path) -> str:
         return ""
 
 
+def extract_pythia8_lhapdf_failure_reason(out_log: str, err_log: str) -> str | None:
+    """Extract a concise LHAPDF-related failure reason from Pythia8 logs."""
+
+    marker_match = re.search(r"^=== PYTHIA8 LHAPDF FAILURE === (.+)$", out_log, flags=re.MULTILINE)
+    if marker_match:
+        return marker_match.group(1).strip()
+
+    combined = f"{out_log}\n{err_log}"
+    set_match = re.search(r"Info file not found for PDF set ['\"]([^'\"]+)['\"]", combined)
+    if set_match:
+        return f"missing LHAPDF set {set_match.group(1)}"
+    if "LHAPDF::ReadError" in combined:
+        return "LHAPDF runtime error; set may be missing"
+    return None
+
+
 def infer_failure_reason(job_id: str, slurm_state: str | None = None) -> str:
     """Infer a concise failed-job reason from runner markers and SLURM state."""
 
     job_paths = get_job_paths(job_id)
     out_log = _read_text_if_exists(job_paths.out_log)
+    err_log = _read_text_if_exists(job_paths.err_log)
     if "=== CPP COMPILE FAILED ===" in out_log:
         return "compile failed; see err.log"
     if "=== CPP RUN FAILED ===" in out_log:
@@ -267,6 +285,9 @@ def infer_failure_reason(job_id: str, slurm_state: str | None = None) -> str:
         return "delphes failed; see err.log"
     if "=== MG5 RUN FAILED ===" in out_log:
         return "mg5 failed; see err.log"
+    pythia8_lhapdf_reason = extract_pythia8_lhapdf_failure_reason(out_log, err_log)
+    if pythia8_lhapdf_reason:
+        return pythia8_lhapdf_reason
     if "=== PYTHIA8 BUILD FAILED ===" in out_log:
         return "pythia8 build failed; see err.log"
     if "=== PYTHIA8 RUN FAILED ===" in out_log:
@@ -356,6 +377,8 @@ def submit(request_path: str) -> None:
     try:
         if job_request.task_type.value == "delphes":
             delphes_settings(job_request)
+        elif job_request.task_type.value == "pythia8":
+            pythia8_settings(job_request)
         else:
             body = _build_runner_body(job_request)
     except (NotImplementedError, ValueError) as exc:
