@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import re
+import shutil
 import sys
 import subprocess
 from dataclasses import dataclass
@@ -11,9 +13,9 @@ from pathlib import Path
 import typer
 from pydantic import ValidationError
 
-from catena_common.jsonio import dumps_json
+from catena_common.jsonio import dumps_json, load_json_file
 from catena_common.models import JobRequest, JobState, JobStatus
-from catena_common.paths import get_job_paths
+from catena_common.paths import base_job_path, base_stage_path, get_job_paths
 
 from catena_server.bundle import bundle_metadata, create_job_bundle
 from catena_server.registry import create_job_layout, job_exists, read_state_json, write_state_json
@@ -50,6 +52,12 @@ TERMINAL_STATES = {
     JobState.FAILED,
     JobState.CANCELLED,
 }
+DELETE_ACTIVE_STATES = {
+    JobState.SUBMITTED,
+    JobState.PENDING,
+    JobState.RUNNING,
+}
+MAX_TREE_ENTRIES_PER_DIR = 20
 
 
 @dataclass(frozen=True, slots=True)
@@ -205,6 +213,46 @@ def _emit_bundle_result(
     )
 
 
+def _emit_jobs_result(jobs: list[dict[str, object]]) -> None:
+    """Print a machine-readable jobs listing document."""
+
+    typer.echo(dumps_json({"jobs": jobs}, indent=2))
+
+
+def _emit_delete_result(job_id: str, deleted: bool, message: str) -> None:
+    """Print a machine-readable job deletion result document."""
+
+    typer.echo(dumps_json({"job_id": job_id, "deleted": deleted, "message": message}, indent=2))
+
+
+def _emit_stages_result(stages: list[dict[str, object]]) -> None:
+    """Print a machine-readable stages listing document."""
+
+    typer.echo(dumps_json({"stages": stages}, indent=2))
+
+
+def _emit_stage_tree_result(job_id: str, stage_dir: str, depth: int, tree: str) -> None:
+    """Print a machine-readable stage tree document."""
+
+    typer.echo(
+        dumps_json(
+            {
+                "job_id": job_id,
+                "stage_dir": stage_dir,
+                "depth": depth,
+                "tree": tree,
+            },
+            indent=2,
+        )
+    )
+
+
+def _emit_clear_stage_result(job_id: str, cleared: bool, message: str) -> None:
+    """Print a machine-readable stage clear result document."""
+
+    typer.echo(dumps_json({"job_id": job_id, "cleared": cleared, "message": message}, indent=2))
+
+
 def _build_status(
     job_id: str,
     state: JobState,
@@ -253,6 +301,210 @@ def _read_text_if_exists(path: Path) -> str:
         return path.read_text(encoding="utf-8", errors="replace")
     except FileNotFoundError:
         return ""
+
+
+def _iso_utc_from_timestamp(timestamp: float) -> str:
+    """Convert a filesystem timestamp to a stable UTC ISO string."""
+
+    return datetime.fromtimestamp(timestamp, tz=timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _job_task_type_from_payload(payload: object) -> str:
+    """Extract the job task type from a persisted job.json payload."""
+
+    if not isinstance(payload, dict):
+        return "unknown"
+    request = payload.get("request")
+    if not isinstance(request, dict):
+        return "unknown"
+    task_type = request.get("task_type")
+    return str(task_type) if isinstance(task_type, str) and task_type else "unknown"
+
+
+def _job_listing_entry(job_dir: Path) -> dict[str, object]:
+    """Build one compact jobs-listing entry from a job directory."""
+
+    entry: dict[str, object] = {
+        "job_id": job_dir.name,
+        "task_type": "unknown",
+        "state": JobState.UNKNOWN.value,
+        "submit_time": None,
+        "finish_time": None,
+        "last_update_time": None,
+        "message": None,
+        "failure_reason": None,
+    }
+    notes: list[str] = []
+
+    try:
+        job_payload = load_json_file(job_dir / "job.json")
+        entry["task_type"] = _job_task_type_from_payload(job_payload)
+    except FileNotFoundError:
+        notes.append("job.json missing")
+    except (OSError, ValidationError, ValueError) as exc:
+        notes.append(f"job.json unreadable: {exc}")
+
+    try:
+        state_record = read_state_json(job_dir.name)
+        entry["state"] = state_record.state.value
+        entry["submit_time"] = state_record.submit_time
+        entry["finish_time"] = state_record.finish_time
+        entry["last_update_time"] = state_record.last_update_time
+        entry["message"] = state_record.message
+        entry["failure_reason"] = state_record.failure_reason
+    except FileNotFoundError:
+        notes.append("state.json missing")
+    except (OSError, ValidationError, ValueError) as exc:
+        notes.append(f"state.json unreadable: {exc}")
+
+    if notes:
+        note_text = "; ".join(notes)
+        current_message = entry.get("message")
+        entry["message"] = f"{current_message}; {note_text}" if isinstance(current_message, str) and current_message else note_text
+
+    try:
+        fallback_sort_time = _iso_utc_from_timestamp(job_dir.stat().st_mtime)
+    except OSError as exc:
+        fallback_sort_time = ""
+        note_text = f"job directory unreadable: {exc}"
+        current_message = entry.get("message")
+        entry["message"] = f"{current_message}; {note_text}" if isinstance(current_message, str) and current_message else note_text
+
+    entry["_sort_time"] = entry.get("submit_time") or entry.get("last_update_time") or entry.get("finish_time") or fallback_sort_time
+    return entry
+
+
+def list_jobs_payload() -> list[dict[str, object]]:
+    """Return compact listing payloads for all job directories."""
+
+    job_root = base_job_path()
+    if not job_root.exists():
+        return []
+
+    jobs: list[dict[str, object]] = []
+    for path in job_root.iterdir():
+        if not path.is_dir():
+            continue
+        try:
+            jobs.append(_job_listing_entry(path))
+        except OSError as exc:
+            jobs.append(
+                {
+                    "job_id": path.name,
+                    "task_type": "unknown",
+                    "state": JobState.UNKNOWN.value,
+                    "submit_time": None,
+                    "finish_time": None,
+                    "last_update_time": None,
+                    "message": f"job directory unreadable: {exc}",
+                    "failure_reason": None,
+                    "_sort_time": "",
+                }
+            )
+    jobs.sort(key=lambda item: str(item["_sort_time"]), reverse=True)
+    for job in jobs:
+        job.pop("_sort_time", None)
+    return jobs
+
+
+def _stage_listing_entry(stage_dir: Path) -> dict[str, object]:
+    """Build one compact staging-area listing entry."""
+
+    file_count = 0
+    total_size_bytes = 0
+    try:
+        for path in stage_dir.rglob("*"):
+            if not path.is_file():
+                continue
+            file_count += 1
+            total_size_bytes += path.stat().st_size
+        modified_time = _iso_utc_from_timestamp(stage_dir.stat().st_mtime)
+    except OSError as exc:
+        modified_time = ""
+
+    return {
+        "stage_id": stage_dir.name,
+        "modified_time": modified_time,
+        "file_count": file_count,
+        "total_size_bytes": total_size_bytes,
+        "_sort_time": modified_time,
+    }
+
+
+def list_stages_payload() -> list[dict[str, object]]:
+    """Return compact listing payloads for all staging directories."""
+
+    stage_root = base_stage_path()
+    if not stage_root.exists():
+        return []
+
+    stages: list[dict[str, object]] = []
+    for path in stage_root.iterdir():
+        if not path.is_dir():
+            continue
+        try:
+            stages.append(_stage_listing_entry(path))
+        except OSError:
+            stages.append(
+                {
+                    "stage_id": path.name,
+                    "modified_time": "",
+                    "file_count": 0,
+                    "total_size_bytes": 0,
+                    "_sort_time": "",
+                }
+            )
+    stages.sort(key=lambda item: str(item["_sort_time"]), reverse=True)
+    for stage in stages:
+        stage.pop("_sort_time", None)
+    return stages
+
+
+def _tree_label(path: Path) -> str:
+    """Return a human-readable tree label for a path."""
+
+    return f"{path.name}/" if path.is_dir() else path.name
+
+
+def _build_tree_lines(path: Path, depth: int, prefix: str = "", level: int = 0) -> list[str]:
+    """Return pruned tree lines for a directory up to the requested depth."""
+
+    lines = [f"{prefix}{_tree_label(path)}"]
+    if not path.is_dir() or level >= depth:
+        if path.is_dir() and level >= depth:
+            try:
+                has_entries = any(path.iterdir())
+            except OSError:
+                has_entries = False
+            if has_entries:
+                lines.append(f"{prefix}└── ...")
+        return lines
+
+    try:
+        entries = sorted(path.iterdir(), key=lambda item: (not item.is_dir(), item.name.lower()))
+    except OSError as exc:
+        lines.append(f"{prefix}└── [unreadable: {exc}]")
+        return lines
+
+    visible_entries = entries[:MAX_TREE_ENTRIES_PER_DIR]
+    for index, child in enumerate(visible_entries):
+        connector = "└── " if index == len(visible_entries) - 1 and len(entries) <= MAX_TREE_ENTRIES_PER_DIR else "├── "
+        child_prefix = prefix + ("    " if connector == "└── " else "│   ")
+        child_lines = _build_tree_lines(child, depth, prefix="", level=level + 1)
+        lines.append(f"{prefix}{connector}{child_lines[0]}")
+        for extra_line in child_lines[1:]:
+            lines.append(f"{child_prefix}{extra_line}")
+
+    hidden_count = len(entries) - len(visible_entries)
+    if hidden_count > 0:
+        lines.append(f"{prefix}└── ... ({hidden_count} more entries)")
+    return lines
+
+
+def build_stage_tree_text(stage_dir: Path, depth: int) -> str:
+    """Return a formatted stage-directory tree string."""
+
+    return "\n".join(_build_tree_lines(stage_dir, depth=depth))
 
 
 def extract_pythia8_lhapdf_failure_reason(out_log: str, err_log: str) -> str | None:
@@ -583,6 +835,159 @@ def status(job_id: str) -> None:
     _emit_status(current_status)
     if exit_code != 0:
         raise typer.Exit(code=exit_code)
+
+
+@app.command()
+def jobs() -> None:
+    """
+    List Catena jobs from the server job root.
+    """
+
+    try:
+        _emit_jobs_result(list_jobs_payload())
+    except OSError as exc:
+        _emit_error("jobs_list_failure", str(exc))
+        raise typer.Exit(code=1) from exc
+
+
+@app.command()
+def delete(
+    job_id: str,
+    force_cancel: bool = typer.Option(
+        False,
+        "--force-cancel",
+        help="Cancel an active SLURM job before deleting the job directory.",
+    ),
+) -> None:
+    """
+    Delete a Catena job directory by job_id.
+    """
+
+    try:
+        job_paths = get_job_paths(job_id)
+    except ValueError as exc:
+        _emit_error("invalid_input", str(exc))
+        raise typer.Exit(code=2) from exc
+
+    if not job_paths.job_dir.exists():
+        _emit_delete_result(job_id, deleted=False, message=f"job '{job_id}' does not exist")
+        raise typer.Exit(code=1)
+
+    state_record = None
+    state_read_error: str | None = None
+    try:
+        state_record = read_state_json(job_id)
+    except FileNotFoundError:
+        state_read_error = "state.json missing"
+    except (OSError, ValidationError, ValueError) as exc:
+        state_read_error = f"state.json unreadable: {exc}"
+
+    if state_record and state_record.state in DELETE_ACTIVE_STATES and not force_cancel:
+        _emit_delete_result(
+            job_id,
+            deleted=False,
+            message=f"job '{job_id}' is active; use --force-cancel to cancel and delete it",
+        )
+        raise typer.Exit(code=1)
+
+    if state_record and state_record.state in DELETE_ACTIVE_STATES and force_cancel and state_record.slurm_job_id:
+        cancel_result = subprocess.run(
+            ["scancel", state_record.slurm_job_id],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if cancel_result.returncode != 0:
+            cancel_error = cancel_result.stderr.strip() or "scancel failed"
+            _emit_delete_result(
+                job_id,
+                deleted=False,
+                message=f"failed to cancel active job '{job_id}': {cancel_error}",
+            )
+            raise typer.Exit(code=1)
+
+    try:
+        shutil.rmtree(job_paths.job_dir)
+    except OSError as exc:
+        _emit_delete_result(job_id, deleted=False, message=str(exc))
+        raise typer.Exit(code=1) from exc
+
+    message = f"deleted job '{job_id}'"
+    if state_record and state_record.state in DELETE_ACTIVE_STATES and force_cancel:
+        message = f"cancelled and deleted job '{job_id}'"
+    if state_read_error:
+        message = f"{message}; {state_read_error}"
+    _emit_delete_result(job_id, deleted=True, message=message)
+
+
+@app.command()
+def stages() -> None:
+    """
+    List Catena staging areas from the server stage root.
+    """
+
+    try:
+        _emit_stages_result(list_stages_payload())
+    except OSError as exc:
+        _emit_error("stages_list_failure", str(exc))
+        raise typer.Exit(code=1) from exc
+
+
+@app.command("stage-tree")
+def stage_tree(
+    job_id: str,
+    depth: int = typer.Option(2, "--depth", help="Maximum tree depth to display."),
+) -> None:
+    """
+    Show a compact staging tree for a given job_id.
+    """
+
+    if depth < 0:
+        _emit_error("invalid_input", "depth must be greater than or equal to zero")
+        raise typer.Exit(code=2)
+
+    try:
+        stage_dir = get_job_paths(job_id).stage_dir
+    except ValueError as exc:
+        _emit_error("invalid_input", str(exc))
+        raise typer.Exit(code=2) from exc
+
+    if not stage_dir.exists():
+        _emit_stage_tree_result(job_id, str(stage_dir), depth, f"{stage_dir.name}/\n└── [missing]")
+        raise typer.Exit(code=1)
+
+    try:
+        tree = build_stage_tree_text(stage_dir, depth=depth)
+    except OSError as exc:
+        _emit_stage_tree_result(job_id, str(stage_dir), depth, f"{stage_dir.name}/\n└── [unreadable: {exc}]")
+        raise typer.Exit(code=1) from exc
+
+    _emit_stage_tree_result(job_id, str(stage_dir), depth, tree)
+
+
+@app.command("clear-stage")
+def clear_stage(job_id: str) -> None:
+    """
+    Delete a staging area by job_id.
+    """
+
+    try:
+        stage_dir = get_job_paths(job_id).stage_dir
+    except ValueError as exc:
+        _emit_error("invalid_input", str(exc))
+        raise typer.Exit(code=2) from exc
+
+    if not stage_dir.exists():
+        _emit_clear_stage_result(job_id, cleared=False, message=f"stage '{job_id}' does not exist")
+        raise typer.Exit(code=1)
+
+    try:
+        shutil.rmtree(stage_dir)
+    except OSError as exc:
+        _emit_clear_stage_result(job_id, cleared=False, message=str(exc))
+        raise typer.Exit(code=1) from exc
+
+    _emit_clear_stage_result(job_id, cleared=True, message=f"cleared stage '{job_id}'")
 
 
 @app.command()

@@ -62,6 +62,115 @@ def error_type_for_exception(exc: BaseException) -> str:
     return "error"
 
 
+def run_remote_json(host: str, user: str, remote_args: list[str]) -> tuple[object, dict[str, object]]:
+    """Run a remote Catena command and parse its JSON payload."""
+
+    result = run_ssh_command(host=host, user=user, remote_args=remote_args)
+    payload = handle_remote_result(result)
+    return result, payload
+
+
+def compact_time(value: object) -> str:
+    """Render an ISO-like timestamp in a compact table-friendly form."""
+
+    if not isinstance(value, str) or not value:
+        return "-"
+    return value.replace("T", " ").replace("Z", "")[:19]
+
+
+def compact_size_bytes(value: object) -> str:
+    """Render a byte count in a small human-readable unit."""
+
+    if not isinstance(value, int):
+        return "-"
+    size = float(value)
+    units = ["B", "KB", "MB", "GB", "TB"]
+    unit_index = 0
+    while size >= 1024 and unit_index < len(units) - 1:
+        size /= 1024
+        unit_index += 1
+    if unit_index == 0:
+        return f"{int(size)}{units[unit_index]}"
+    return f"{size:.1f}{units[unit_index]}"
+
+
+def truncate_text(value: object, width: int) -> str:
+    """Clamp a display value to a fixed width with an ellipsis."""
+
+    text = str(value) if value not in {None, ""} else "-"
+    if len(text) <= width:
+        return text
+    return text[: width - 1] + "…"
+
+
+def render_table(headers: list[str], rows: list[list[str]]) -> str:
+    """Render a simple left-aligned table."""
+
+    widths = [len(header) for header in headers]
+    for row in rows:
+        for index, cell in enumerate(row):
+            widths[index] = max(widths[index], len(cell))
+
+    def format_row(row: list[str]) -> str:
+        return "  ".join(cell.ljust(widths[index]) for index, cell in enumerate(row))
+
+    separator = "  ".join("-" * width for width in widths)
+    lines = [format_row(headers), separator]
+    lines.extend(format_row(row) for row in rows)
+    return "\n".join(lines)
+
+
+def short_job_detail(item: dict[str, object], width: int = 42) -> str:
+    """Return a compact message or failure detail for a jobs table row."""
+
+    detail = item.get("failure_reason") or item.get("message") or "-"
+    return truncate_text(detail, width)
+
+
+def render_jobs_table(items: list[dict[str, object]]) -> str:
+    """Render a compact client-side jobs table."""
+
+    headers = ["SUBMIT TIME", "JOB ID", "TYPE", "STATUS", "FINISH TIME", "DETAIL"]
+    rows = [
+        [
+            compact_time(item.get("submit_time")),
+            truncate_text(item.get("job_id"), 18),
+            truncate_text(item.get("task_type"), 12),
+            truncate_text(item.get("state"), 10),
+            compact_time(item.get("finish_time")),
+            short_job_detail(item),
+        ]
+        for item in items
+    ]
+    return render_table(headers, rows)
+
+
+def render_stages_table(items: list[dict[str, object]]) -> str:
+    """Render a compact client-side stages table."""
+
+    headers = ["STAGE ID", "MODIFIED", "FILES", "SIZE"]
+    rows = [
+        [
+            truncate_text(item.get("stage_id"), 24),
+            compact_time(item.get("modified_time")),
+            truncate_text(item.get("file_count"), 7),
+            compact_size_bytes(item.get("total_size_bytes")),
+        ]
+        for item in items
+    ]
+    return render_table(headers, rows)
+
+
+def payload_list(payload: dict[str, object], key: str) -> list[dict[str, object]]:
+    """Extract a list-of-dicts payload field from a remote response."""
+
+    value = payload.get(key)
+    if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
+        msg = f"remote response is missing a valid '{key}' list"
+        raise ValueError(msg)
+    return value
+
+
 @app.command()
 def submit(
     request_path: str,
@@ -113,6 +222,67 @@ def status(
         raise typer.Exit(code=1) from exc
 
     emit_json(payload)
+    if result.returncode != 0:
+        raise typer.Exit(code=result.returncode)
+
+
+@app.command()
+def jobs(
+    host: str = typer.Option(config.REMOTE_HOST, "--host", help="Remote SSH host."),
+    user: str = typer.Option(config.REMOTE_USER, "--user", help="Remote SSH user."),
+) -> None:
+    """
+    List Catena jobs in a compact table.
+    """
+
+    try:
+        result, payload = run_remote_json(host, user, [config.REMOTE_SERVER_CMD, "jobs"])
+        items = payload_list(payload, "jobs")
+    except (OSError, ValueError, RuntimeError) as exc:
+        emit_error(str(exc), error_type_for_exception(exc))
+        raise typer.Exit(code=1) from exc
+
+    if not items:
+        typer.echo("No jobs found.")
+    else:
+        typer.echo(render_jobs_table(items))
+
+    if result.returncode != 0:
+        raise typer.Exit(code=result.returncode)
+
+
+@app.command()
+def delete(
+    job_id: str,
+    force_cancel: bool = typer.Option(
+        False,
+        "--force-cancel",
+        help="Cancel an active SLURM job before deleting it remotely.",
+    ),
+    host: str = typer.Option(config.REMOTE_HOST, "--host", help="Remote SSH host."),
+    user: str = typer.Option(config.REMOTE_USER, "--user", help="Remote SSH user."),
+) -> None:
+    """
+    Delete a Catena job by job_id.
+    """
+
+    try:
+        validate_job_id(job_id)
+        remote_args = [config.REMOTE_SERVER_CMD, "delete", job_id]
+        if force_cancel:
+            remote_args.append("--force-cancel")
+        result, payload = run_remote_json(host, user, remote_args)
+    except (OSError, ValueError, RuntimeError) as exc:
+        emit_error(str(exc), error_type_for_exception(exc))
+        raise typer.Exit(code=1) from exc
+
+    deleted = bool(payload.get("deleted", False))
+    message = payload.get("message")
+    if deleted:
+        typer.echo(str(message) if isinstance(message, str) and message else f"Deleted job {job_id}.")
+    else:
+        emit_json(payload)
+
     if result.returncode != 0:
         raise typer.Exit(code=result.returncode)
 
@@ -242,6 +412,95 @@ def fetch(
             "message": "fetch completed",
         }
     )
+
+
+@app.command()
+def stages(
+    host: str = typer.Option(config.REMOTE_HOST, "--host", help="Remote SSH host."),
+    user: str = typer.Option(config.REMOTE_USER, "--user", help="Remote SSH user."),
+) -> None:
+    """
+    List Catena staging areas in a compact table.
+    """
+
+    try:
+        result, payload = run_remote_json(host, user, [config.REMOTE_SERVER_CMD, "stages"])
+        items = payload_list(payload, "stages")
+    except (OSError, ValueError, RuntimeError) as exc:
+        emit_error(str(exc), error_type_for_exception(exc))
+        raise typer.Exit(code=1) from exc
+
+    if not items:
+        typer.echo("No staging areas found.")
+    else:
+        typer.echo(render_stages_table(items))
+
+    if result.returncode != 0:
+        raise typer.Exit(code=result.returncode)
+
+
+@app.command("stage-tree")
+def stage_tree(
+    job_id: str,
+    depth: int = typer.Option(2, "--depth", help="Maximum tree depth to display."),
+    host: str = typer.Option(config.REMOTE_HOST, "--host", help="Remote SSH host."),
+    user: str = typer.Option(config.REMOTE_USER, "--user", help="Remote SSH user."),
+) -> None:
+    """
+    Show a compact tree view of a remote staging area.
+    """
+
+    if depth < 0:
+        emit_error("depth must be greater than or equal to zero", "invalid_input")
+        raise typer.Exit(code=2)
+
+    try:
+        validate_job_id(job_id)
+        result, payload = run_remote_json(
+            host,
+            user,
+            [config.REMOTE_SERVER_CMD, "stage-tree", job_id, "--depth", str(depth)],
+        )
+    except (OSError, ValueError, RuntimeError) as exc:
+        emit_error(str(exc), error_type_for_exception(exc))
+        raise typer.Exit(code=1) from exc
+
+    tree = payload.get("tree")
+    if not isinstance(tree, str):
+        emit_error("remote response is missing a valid 'tree' field", "remote_response_error")
+        raise typer.Exit(code=1)
+    typer.echo(tree)
+
+    if result.returncode != 0:
+        raise typer.Exit(code=result.returncode)
+
+
+@app.command("clear-stage")
+def clear_stage(
+    job_id: str,
+    host: str = typer.Option(config.REMOTE_HOST, "--host", help="Remote SSH host."),
+    user: str = typer.Option(config.REMOTE_USER, "--user", help="Remote SSH user."),
+) -> None:
+    """
+    Delete a remote Catena staging area by job_id.
+    """
+
+    try:
+        validate_job_id(job_id)
+        result, payload = run_remote_json(host, user, [config.REMOTE_SERVER_CMD, "clear-stage", job_id])
+    except (OSError, ValueError, RuntimeError) as exc:
+        emit_error(str(exc), error_type_for_exception(exc))
+        raise typer.Exit(code=1) from exc
+
+    cleared = bool(payload.get("cleared", False))
+    message = payload.get("message")
+    if cleared:
+        typer.echo(str(message) if isinstance(message, str) and message else f"Cleared stage {job_id}.")
+    else:
+        emit_json(payload)
+
+    if result.returncode != 0:
+        raise typer.Exit(code=result.returncode)
 
 
 @app.command()
