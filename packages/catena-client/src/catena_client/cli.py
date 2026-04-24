@@ -65,6 +65,8 @@ def error_type_for_exception(exc: BaseException) -> str:
 def run_remote_json(host: str, user: str, remote_args: list[str]) -> tuple[object, dict[str, object]]:
     """Run a remote Catena command and parse its JSON payload."""
 
+    # Management commands keep the server JSON-only; the client owns any table
+    # or tree rendering so machine-readable automation stays stable.
     result = run_ssh_command(host=host, user=user, remote_args=remote_args)
     payload = handle_remote_result(result)
     return result, payload
@@ -106,6 +108,8 @@ def truncate_text(value: object, width: int) -> str:
 def render_table(headers: list[str], rows: list[list[str]]) -> str:
     """Render a simple left-aligned table."""
 
+    # The client uses fixed plain-text tables instead of rich formatting so the
+    # output stays readable over SSH and easy to scrape when needed.
     widths = [len(header) for header in headers]
     for row in rows:
         for index, cell in enumerate(row):
@@ -377,6 +381,8 @@ def fetch(
                 "Fetch mode: inputs not included. Use --include-inputs to include staged input files.",
                 err=True,
             )
+        # The bundle mode notice stays on stderr so stdout remains one final
+        # machine-readable JSON payload.
         remote_args = [config.REMOTE_SERVER_CMD, "bundle", job_id]
         if not include_inputs:
             remote_args.append("--no-inputs")

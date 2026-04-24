@@ -179,11 +179,11 @@ catena-server status JOB_ID
 Client fetch calls:
 
 ```text
-catena-server bundle JOB_ID --no-inputs
+catena-server bundle JOB_ID
 ```
 
-This keeps fetched archives focused on logs, metadata, and outputs instead of
-downloading the original input files again.
+The client defaults to `--no-inputs` for fetches, but exposes
+`--include-inputs/--no-inputs` so the caller can choose per request.
 
 ## Transfer Design
 
@@ -199,6 +199,31 @@ server validates and accepts a submit request.
 
 Transfers prefer `rsync` and fall back to `scp` when available. Progress output
 is sent to stderr only. Final JSON is always printed on stdout.
+
+## Job And Stage Management
+
+The server now exposes filesystem management commands directly:
+
+- `jobs`: scans the job root and returns compact metadata sorted by newest
+  `submit_time`.
+- `delete JOB_ID`: deletes an inactive job directory, or cancels and deletes an
+  active job when `--force-cancel` is supplied.
+- `stages`: scans the staging root and returns compact recursive file-count and
+  size metadata.
+- `stage-tree JOB_ID --depth N`: returns a pruned formatted tree string in a
+  JSON field.
+- `clear-stage JOB_ID`: deletes one staging directory.
+
+The client mirrors these commands over SSH:
+
+- `catena-client jobs`
+- `catena-client delete JOB_ID [--force-cancel]`
+- `catena-client stages`
+- `catena-client stage-tree JOB_ID [--depth N]`
+- `catena-client clear-stage JOB_ID`
+
+Client rendering stays local. Tables and tree output are intentionally kept on
+the client so server stdout remains JSON-only.
 
 ## Watch Design
 
@@ -322,6 +347,10 @@ The runner uses `entry_file` as a safe relative `.cc` source file under
 
 - `binary_name`: executable name, defaulting to the source file stem.
 - `make_target`: make target, defaulting to `binary_name`.
+- `use_lhapdf`: explicit boolean override for LHAPDF handling.
+- `lhapdf_sets`: explicit LHAPDF set-name list override.
+- `auto_install_lhapdf`: boolean, default `true`.
+- `lhapdf_data_path`: explicit absolute override for `LHAPDF_DATA_PATH`.
 
 The runner activates the `DLPS` conda environment, copies the packaged
 `catena_common/pythia8/Makefile.inc` into `inputs/`, generates a minimal local
@@ -329,12 +358,30 @@ Makefile, runs `make <make_target>`, verifies the requested binary is
 executable, and runs `./<binary_name> {cli_args...}`. The built binary and newly
 created files from `inputs/` are copied into `outputs/`.
 
+Before generating the final SLURM body, the runner inspects the staged source
+file for LHAPDF usage markers and obvious hardcoded set names such as:
+
+- `#include <LHAPDF/LHAPDF.h>`
+- `LHAPDF::`
+- `mkPDF("NNPDF31_lo_as_0118", 0)`
+
+Resolution precedence is:
+
+1. explicit `request.extra` values
+2. source-code inference
+3. no LHAPDF handling
+
+When LHAPDF is enabled, the runner exports `LHAPDF_DATA_PATH`, checks each
+resolved set, and auto-installs missing sets by default using `lhapdf install`
+under a simple lock directory in `/scratch/au152/catena_locks`.
+
 ## Known Limitations
 
 - Python, C++, Delphes, MG5 + Pythia, and Pythia8 jobs are executable today.
 - Python jobs copy newly created files from `inputs/` to `outputs/`, but this
   is a simple file comparison and not a full artifact manifest.
-- There is no retry or cancellation command yet.
+- There is no retry or resubmit command yet.
 - There is no database or locking mechanism around concurrent submits with the
   same `job_id`.
 - SLURM state mapping is deliberately small and should be expanded as needed.
+- Sherpa is still modeled but not implemented.

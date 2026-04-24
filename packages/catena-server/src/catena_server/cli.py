@@ -357,6 +357,8 @@ def _job_listing_entry(job_dir: Path) -> dict[str, object]:
     except (OSError, ValidationError, ValueError) as exc:
         notes.append(f"state.json unreadable: {exc}")
 
+    # Listing should stay best-effort: malformed job directories still show up
+    # with a note instead of aborting the whole jobs command.
     if notes:
         note_text = "; ".join(notes)
         current_message = entry.get("message")
@@ -486,6 +488,8 @@ def _build_tree_lines(path: Path, depth: int, prefix: str = "", level: int = 0) 
         lines.append(f"{prefix}└── [unreadable: {exc}]")
         return lines
 
+    # Prune very large staging directories so stage-tree stays readable in a
+    # terminal and inexpensive to render over SSH.
     visible_entries = entries[:MAX_TREE_ENTRIES_PER_DIR]
     for index, child in enumerate(visible_entries):
         connector = "└── " if index == len(visible_entries) - 1 and len(entries) <= MAX_TREE_ENTRIES_PER_DIR else "├── "

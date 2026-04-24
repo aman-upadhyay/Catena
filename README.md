@@ -5,8 +5,8 @@ Amarel through SLURM. It is organized as a monorepo with separate client and
 server install targets, plus shared schemas and path helpers.
 
 The current implementation is intentionally file-based and CLI-driven. There
-is no HTTP service, no database, and no runner dispatch beyond the Python
-runner yet.
+is no HTTP service and no database backend. Job state, staging, and bundles are
+managed directly on the filesystem through the client and server CLIs.
 
 ## Repository Layout
 
@@ -156,6 +156,12 @@ Check status:
 catena-client status example_python_job
 ```
 
+List jobs in a compact table:
+
+```bash
+catena-client jobs
+```
+
 Watch until terminal state. Intermediate status lines go to stderr. The final
 machine-readable JSON response is printed once to stdout.
 
@@ -171,13 +177,30 @@ catena-client upload large_input_job events.hepmc weights.dat
 ```
 
 Fetch a completed job bundle. This remotely runs
-`catena-server bundle JOB_ID --no-inputs` first, then copies the zip back using
-rsync if available or scp as fallback. Fetched archives omit `inputs/` so large
-or staged input files are not downloaded again.
+`catena-server bundle JOB_ID` first, then copies the zip back using rsync if
+available or scp as fallback. By default the client requests `--no-inputs` so
+large or staged input files are not downloaded again.
 
 ```bash
 catena-client fetch example_python_job
 catena-client fetch example_python_job --dest results/example_python_job.zip
+catena-client fetch example_python_job --include-inputs
+```
+
+Delete a job, optionally cancelling an active SLURM job first:
+
+```bash
+catena-client delete example_python_job
+catena-client delete example_python_job --force-cancel
+```
+
+List staging areas, inspect a tree, or clear a stage:
+
+```bash
+catena-client stages
+catena-client stage-tree large_input_job
+catena-client stage-tree large_input_job --depth 1
+catena-client clear-stage large_input_job
 ```
 
 Use `--host` and `--user` on client commands to override the default SSH
@@ -205,6 +228,27 @@ Check status:
 
 ```bash
 catena-server status example_python_job
+```
+
+List jobs:
+
+```bash
+catena-server jobs
+```
+
+Delete a job directory:
+
+```bash
+catena-server delete example_python_job
+catena-server delete example_python_job --force-cancel
+```
+
+List staging areas, inspect one, or clear it:
+
+```bash
+catena-server stages
+catena-server stage-tree large_input_job
+catena-server clear-stage large_input_job
 ```
 
 Create or refresh a bundle:
@@ -311,12 +355,49 @@ For Pythia8 jobs, `entry_file` is a safe relative `.cc` source file under
 
 - `binary_name`: output executable name, defaulting to the source file stem.
 - `make_target`: make target, defaulting to `binary_name`.
+- `use_lhapdf`: explicit LHAPDF enable/disable override.
+- `lhapdf_sets`: explicit LHAPDF set-name list override.
+- `auto_install_lhapdf`: default `true`; disable only to force a hard fail when
+  a required set is missing.
+- `lhapdf_data_path`: explicit absolute override for `LHAPDF_DATA_PATH`.
 
 The generated SLURM body activates the `DLPS` conda environment, copies the
 packaged `Makefile.inc` into `inputs/`, generates a local Makefile, runs
 `make <make_target>`, and then runs `./<binary_name> {cli_args...}`. The built
 binary and newly created files are copied into `outputs/`; original inputs are
-left in place.
+left in place. When LHAPDF use is inferred or explicitly enabled, Catena sets
+`LHAPDF_DATA_PATH`, checks the requested or inferred PDF sets, auto-installs
+missing sets by default, and records clearer LHAPDF-related failure reasons in
+status/watch output.
+
+## Management Commands
+
+The job and stage management commands are split cleanly:
+
+- Server commands always return machine-readable JSON.
+- Client commands render tables or tree output locally after SSHing to the
+  server.
+
+`catena-server jobs` and `catena-client jobs` report compact metadata:
+
+- `job_id`
+- `task_type`
+- `state`
+- `submit_time`
+- `finish_time`
+- `last_update_time`
+- `message`
+- `failure_reason`
+
+`catena-server stages` and `catena-client stages` report compact staging
+metadata:
+
+- `stage_id`
+- `modified_time`
+- `file_count`
+- `total_size_bytes`
+
+`stage-tree` returns a pruned tree view to the requested depth, default `2`.
 
 ## Job Directory Layout
 
@@ -456,4 +537,12 @@ catena-server --help
 - HTTP or daemon server mode.
 - SQLite or another database backend.
 - Artifact manifests beyond bundle zip creation.
-- Automatic runner-specific environment setup beyond the implemented runners.
+- Retry/resubmit workflows for failed jobs.
+
+## Machine-Readable Usage Spec
+
+For agent-oriented usage details, see:
+
+```text
+docs/USAGE_SPEC.yaml
+```

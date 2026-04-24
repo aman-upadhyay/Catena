@@ -1,0 +1,436 @@
+schema_version: "1.0"
+project:
+  name: "Catena"
+  summary: "File-based CLI/SSH job launcher for SLURM workflows on Amarel."
+  architecture:
+    style: "monorepo"
+    packages:
+      - name: "catena_common"
+        role: "shared models, config, JSON helpers, path helpers, packaged Pythia8 Makefile.inc"
+      - name: "catena_client"
+        role: "local CLI on Pascal3 or another client machine; talks to the server through SSH"
+      - name: "catena_server"
+        role: "remote CLI on Amarel; owns job directories, staging, SLURM, runners, bundles"
+installation:
+  client:
+    command: "python -m pip install -e packages/catena-client"
+    machine_role: "Pascal3 or another client host"
+  server:
+    command: "python -m pip install -e packages/catena-server"
+    machine_role: "Amarel or the server-side host"
+runtime_defaults:
+  paths:
+    job_root: "/scratch/au152/agent_job"
+    stage_root: "/scratch/au152/catena_stage"
+    remote_server_cmd: "/home/au152/Software/miniconda3/envs/Catena/bin/catena-server"
+    conda_sh: "/home/au152/Software/miniconda3/etc/profile.d/conda.sh"
+    lhapdf_data_path: "/home/au152/Software/miniconda3/envs/DLPS/share/LHAPDF"
+    lhapdf_lock_dir: "/scratch/au152/catena_locks"
+  ssh:
+    host: "amarel.rutgers.edu"
+    user: "au152"
+  envs:
+    catena: "Catena"
+    mg: "MG"
+    dlps: "DLPS"
+    srpa: "SRPA"
+  slurm:
+    partition: "main"
+    requeue: true
+    nodes: 1
+    ntasks: 1
+    cpus_per_task: 50
+    mem_mb: 50000
+    time: "70:00:00"
+    array: "1"
+concepts:
+  job_directory:
+    root_template: "/scratch/au152/agent_job/{job_id}"
+    members:
+      - "inputs/"
+      - "outputs/"
+      - "bundle/"
+      - "job.json"
+      - "state.json"
+      - "slurm.sh"
+      - "out.log"
+      - "err.log"
+  staging_directory:
+    root_template: "/scratch/au152/catena_stage/{job_id}"
+    purpose: "temporary uploaded-file staging before submit"
+  bundle_file:
+    template: "/scratch/au152/agent_job/{job_id}/bundle/{job_id}.zip"
+request_schema:
+  model: "catena_common.models.JobRequest"
+  fields:
+    job_id:
+      type: "string"
+      required: true
+      constraints:
+        pattern: "^[A-Za-z0-9_-]+$"
+    task_type:
+      type: "enum"
+      required: true
+      values:
+        implemented:
+          - "python"
+          - "cpp"
+          - "delphes"
+          - "mg5_pythia"
+          - "pythia8"
+        modeled_but_not_implemented:
+          - "sherpa"
+    entry_file:
+      type: "string|null"
+      required: false
+      constraints:
+        relative_only: true
+    cli_args:
+      type: "list[string]"
+      required: false
+      default: []
+    input_files:
+      type: "list[InputFile]"
+      required: false
+      default: []
+    extra:
+      type: "dict[string, str|int|float|bool|null|list[string]]"
+      required: false
+      default: {}
+input_file_schema:
+  model: "catena_common.models.InputFile"
+  fields:
+    name:
+      type: "string"
+      required: true
+      constraints:
+        safe_relative_path: true
+        no_parent_references: true
+    mode:
+      type: "enum"
+      values:
+        - "inline"
+        - "uploaded"
+        - "server_path"
+      default: "inline"
+    content_b64:
+      type: "string|null"
+      required_for: ["inline"]
+    path:
+      type: "string|null"
+      required_for: ["server_path"]
+      constraints:
+        absolute_only: true
+io_modes:
+  inline:
+    meaning: "request embeds the file content as base64"
+  uploaded:
+    meaning: "file must already exist in /scratch/au152/catena_stage/{job_id}/"
+  server_path:
+    meaning: "server copies the file from an absolute path already present on the server"
+client_commands:
+  submit:
+    syntax: "catena-client submit REQUEST_JSON [--host HOST] [--user USER]"
+    purpose: "validate a local request and submit it over SSH via stdin"
+    stdout: "machine-readable JSON status payload"
+    stderr: "transport errors only"
+    examples:
+      - "catena-client submit request.json"
+  status:
+    syntax: "catena-client status JOB_ID [--host HOST] [--user USER]"
+    purpose: "fetch one remote status JSON payload"
+    stdout: "machine-readable JSON status payload"
+    examples:
+      - "catena-client status example_python_job"
+  watch:
+    syntax: "catena-client watch JOB_ID [--interval SECONDS] [--host HOST] [--user USER]"
+    purpose: "poll remote status until terminal"
+    defaults:
+      interval: 10.0
+    stdout: "final machine-readable JSON status payload"
+    stderr: "intermediate human-readable polling lines"
+    examples:
+      - "catena-client watch example_python_job"
+      - "catena-client watch example_python_job --interval 20"
+  upload:
+    syntax: "catena-client upload JOB_ID FILE [FILE ...] [--progress|--no-progress] [--host HOST] [--user USER]"
+    purpose: "upload one or more local files into the remote stage directory"
+    stdout: "machine-readable JSON upload result"
+    stderr: "transfer progress when enabled"
+    examples:
+      - "catena-client upload large_input_job events.hepmc weights.dat"
+  fetch:
+    syntax: "catena-client fetch JOB_ID [--dest PATH] [--include-inputs|--no-inputs] [--progress|--no-progress] [--host HOST] [--user USER]"
+    purpose: "request a remote bundle, then copy the zip back locally"
+    defaults:
+      include_inputs: false
+    stdout: "machine-readable JSON fetch result"
+    stderr:
+      - "one line describing whether inputs are included"
+      - "transfer progress when enabled"
+    examples:
+      - "catena-client fetch example_python_job"
+      - "catena-client fetch example_python_job --include-inputs"
+      - "catena-client fetch example_python_job --dest results/job.zip"
+  jobs:
+    syntax: "catena-client jobs [--host HOST] [--user USER]"
+    purpose: "render a compact table of remote jobs"
+    stdout: "human-readable table"
+  delete:
+    syntax: "catena-client delete JOB_ID [--force-cancel] [--host HOST] [--user USER]"
+    purpose: "delete a remote job directory; optionally cancel an active SLURM job first"
+    stdout:
+      success: "concise confirmation line"
+      failure: "machine-readable JSON result"
+  stages:
+    syntax: "catena-client stages [--host HOST] [--user USER]"
+    purpose: "render a compact table of remote staging areas"
+    stdout: "human-readable table"
+  stage-tree:
+    syntax: "catena-client stage-tree JOB_ID [--depth N] [--host HOST] [--user USER]"
+    purpose: "print a pruned tree view of one remote staging area"
+    defaults:
+      depth: 2
+    stdout: "human-readable tree"
+  clear-stage:
+    syntax: "catena-client clear-stage JOB_ID [--host HOST] [--user USER]"
+    purpose: "delete one remote staging area"
+    stdout:
+      success: "concise confirmation line"
+      failure: "machine-readable JSON result"
+server_commands:
+  submit:
+    syntax: "catena-server submit REQUEST_JSON_PATH | -"
+    purpose: "create the job layout, materialize inputs, render slurm.sh, and run sbatch"
+    stdout: "machine-readable JSON status payload"
+  status:
+    syntax: "catena-server status JOB_ID"
+    purpose: "read local state, query SLURM, and return one status JSON payload"
+    stdout: "machine-readable JSON status payload"
+  bundle:
+    syntax: "catena-server bundle JOB_ID [--include-inputs|--no-inputs]"
+    purpose: "create or refresh the job zip bundle"
+    defaults:
+      include_inputs: true
+    stdout: "machine-readable JSON bundle result"
+  jobs:
+    syntax: "catena-server jobs"
+    purpose: "scan the job root and list jobs sorted by newest submit_time"
+    stdout: "machine-readable JSON: { jobs: [...] }"
+  delete:
+    syntax: "catena-server delete JOB_ID [--force-cancel]"
+    purpose: "delete one job directory, with active-job protection"
+    behavior:
+      active_without_force_cancel: "refuse"
+      active_with_force_cancel: "run scancel when slurm_job_id exists, then delete"
+    stdout: "machine-readable JSON: { job_id, deleted, message }"
+  stages:
+    syntax: "catena-server stages"
+    purpose: "scan the staging root and list stage directories sorted by newest modified time"
+    stdout: "machine-readable JSON: { stages: [...] }"
+  stage-tree:
+    syntax: "catena-server stage-tree JOB_ID [--depth N]"
+    purpose: "return a pruned stage tree string inside JSON"
+    defaults:
+      depth: 2
+    stdout: "machine-readable JSON: { job_id, stage_dir, depth, tree }"
+  clear-stage:
+    syntax: "catena-server clear-stage JOB_ID"
+    purpose: "delete one stage directory"
+    stdout: "machine-readable JSON: { job_id, cleared, message }"
+status_payload:
+  shape:
+    job_id: "string"
+    state: "RECEIVED|PREPARING|SUBMITTED|PENDING|RUNNING|COMPLETED|FAILED|CANCELLED|UNKNOWN"
+    active: "boolean"
+    slurm_job_id: "string|null"
+    job_dir: "string"
+    message: "string|null"
+    failure_reason: "string|null"
+    exit_code: "integer|null"
+bundle_payload:
+  shape:
+    job_id: "string"
+    job_dir: "string"
+    zip_path: "string"
+    zip_size_bytes: "integer|null"
+    zip_sha256: "string|null"
+    message: "string|null"
+management_payloads:
+  jobs:
+    item_shape:
+      job_id: "string"
+      task_type: "string"
+      state: "string"
+      submit_time: "string|null"
+      finish_time: "string|null"
+      last_update_time: "string|null"
+      message: "string|null"
+      failure_reason: "string|null"
+  delete:
+    shape:
+      job_id: "string"
+      deleted: "boolean"
+      message: "string"
+  stages:
+    item_shape:
+      stage_id: "string"
+      modified_time: "string"
+      file_count: "integer"
+      total_size_bytes: "integer"
+  stage_tree:
+    shape:
+      job_id: "string"
+      stage_dir: "string"
+      depth: "integer"
+      tree: "string"
+  clear_stage:
+    shape:
+      job_id: "string"
+      cleared: "boolean"
+      message: "string"
+task_types:
+  python:
+    purpose: "run a Python entry script in the Catena conda environment"
+    extra: {}
+    behavior:
+      - "activate Catena env"
+      - "run python {entry_file} {cli_args...}"
+      - "copy new files from inputs/ into outputs/"
+  cpp:
+    purpose: "compile and run a C++ entry file in the Catena env"
+    extra: {}
+    behavior:
+      - "compile with g++ -O2 -std=c++17"
+      - "use root-config and conda include/lib paths"
+      - "run ./job_exe {cli_args...}"
+      - "copy new files from inputs/ into outputs/"
+  delphes:
+    purpose: "run DelphesHepMC2 or DelphesHepMC3 against a staged HepMC file"
+    extra:
+      delphes_card: "required relative card file in inputs/"
+      hepmc_file: "required relative HepMC file in inputs/"
+      out_root: "optional relative output ROOT name in outputs/, default output.root"
+    behavior:
+      - "read first 5 lines of the staged HepMC file"
+      - "select DelphesHepMC2 or DelphesHepMC3 automatically"
+      - "activate DLPS env"
+      - "write ROOT output directly into outputs/"
+  mg5_pythia:
+    purpose: "run MG5_aMC generation and launch phases non-interactively"
+    extra:
+      mg5_exec: "optional executable override"
+      preserve_run_dir: "optional bool, default true"
+    behavior:
+      - "split command file into generate and launch phases"
+      - "copy uploaded run_card.dat, pythia8_card.dat, param_card.dat into <process_dir>/Cards/"
+      - "preserve generated MG5 directories"
+      - "copy common artifacts into outputs/mg5_artifacts/"
+  pythia8:
+    purpose: "compile and run a Pythia8 C++ program using Makefile.inc in the DLPS env"
+    extra:
+      binary_name: "optional executable name; default is entry_file stem"
+      make_target: "optional make target; default is binary_name"
+      use_lhapdf: "optional explicit boolean override"
+      lhapdf_sets: "optional explicit list of set names"
+      auto_install_lhapdf: "optional explicit boolean override; default true"
+      lhapdf_data_path: "optional explicit absolute path override"
+    behavior:
+      - "copy packaged Makefile.inc into inputs/"
+      - "generate a local Makefile"
+      - "run make <make_target>"
+      - "run ./<binary_name> {cli_args...}"
+      - "copy built binary and new files into outputs/"
+      - "infer LHAPDF use from source markers when possible"
+      - "infer obvious hardcoded set names from LHAPDF::mkPDF(\"SET\", ...)"
+      - "set LHAPDF_DATA_PATH explicitly when LHAPDF is enabled"
+      - "check/install missing sets under a simple lock directory"
+lhapdf_resolution:
+  precedence:
+    - "explicit request.extra values"
+    - "source inference"
+    - "disabled"
+  source_markers:
+    - "#include \"LHAPDF/LHAPDF.h\""
+    - "#include <LHAPDF/LHAPDF.h>"
+    - "LHAPDF::"
+    - "mkPDF("
+  inferable_set_pattern: "LHAPDF::mkPDF(\"SET_NAME\", ...)"
+  warning_when_unknown_set: "LHAPDF appears to be used but no PDF set name could be inferred"
+error_types:
+  client:
+    - "invalid_input"
+    - "ssh_failure"
+    - "remote_response_error"
+    - "transfer_failure"
+    - "error"
+  server:
+    - "invalid_input"
+    - "job_id_exists"
+    - "state_read_failure"
+    - "jobs_list_failure"
+    - "stages_list_failure"
+common_workflows:
+  small_inline_python:
+    steps:
+      - "write request.json with task_type=python and inline run.py"
+      - "catena-client submit request.json"
+      - "catena-client watch JOB_ID"
+      - "catena-client fetch JOB_ID"
+  large_uploaded_input:
+    steps:
+      - "catena-client upload JOB_ID large_file.dat"
+      - "reference the file in request.json as {\"name\":\"large_file.dat\",\"mode\":\"uploaded\"}"
+      - "catena-client submit request.json"
+  stage_management:
+    steps:
+      - "catena-client stages"
+      - "catena-client stage-tree JOB_ID"
+      - "catena-client clear-stage JOB_ID"
+  pythia8_with_lhapdf:
+    steps:
+      - "write main.cc with LHAPDF::mkPDF(\"NNPDF31_lo_as_0118\", 0)"
+      - "submit without explicit LHAPDF options to let Catena infer them"
+      - "Catena auto-installs missing sets by default unless auto_install_lhapdf=false"
+templates:
+  minimal_inline_python_request:
+    job_id: "example_python_job"
+    task_type: "python"
+    entry_file: "run.py"
+    cli_args:
+      - "--events"
+      - "100"
+    input_files:
+      - name: "run.py"
+        mode: "inline"
+        content_b64: "cHJpbnQoJ2hlbGxvIGZyb20gQ2F0ZW5hJykK"
+    extra: {}
+  uploaded_pythia8_request:
+    job_id: "pythia_all01"
+    task_type: "pythia8"
+    entry_file: "main_all.cc"
+    cli_args:
+      - "main_all.cmnd"
+      - "events.hepmc"
+    input_files:
+      - name: "main_all.cc"
+        mode: "uploaded"
+      - name: "main_all.cmnd"
+        mode: "uploaded"
+    extra:
+      binary_name: "main_all"
+      auto_install_lhapdf: true
+  delphes_request:
+    job_id: "delphes01"
+    task_type: "delphes"
+    entry_file: null
+    cli_args: []
+    input_files:
+      - name: "delphes_card.tcl"
+        mode: "uploaded"
+      - name: "events.hepmc"
+        mode: "uploaded"
+    extra:
+      delphes_card: "delphes_card.tcl"
+      hepmc_file: "events.hepmc"
+      out_root: "output.root"
