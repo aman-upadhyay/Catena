@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[4]
+DIAGNOSTICS_DIR = os.environ.get("CATENA_DIAGNOSTICS_DIR", str(REPO_ROOT / "diagnostics"))
+MISSING_TOOLS_LOG = str(Path(DIAGNOSTICS_DIR) / "missing_tools.jsonl")
 
 BASE_JOB_DIR = "/scratch/au152/agent_job"
 BASE_STAGE_DIR = "/scratch/au152/catena_stage"
@@ -29,6 +34,7 @@ LHAPDF_LOCK_DIR = "/home/au152/.cache/Catena/locks/catena_locks"
 MG_ENV = "MG"
 DLPS_ENV = "DLPS"
 SRPA_ENV = "SRPA"
+PYTHON_ENV = "HEP_workflow"
 CATENA_ENV = "Catena"
 
 REMOTE_HOST = "amarel.rutgers.edu"

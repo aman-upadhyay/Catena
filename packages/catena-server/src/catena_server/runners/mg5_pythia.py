@@ -7,6 +7,7 @@ import shlex
 from catena_common import config
 from catena_common.models import JobRequest, validate_safe_relative_name
 from catena_common.paths import get_job_paths
+from catena_server.runners.diagnostics import shell_diagnostics_lines
 
 
 def _extra_string(job_request: JobRequest, key: str, default: str) -> str:
@@ -67,6 +68,7 @@ def build_mg5_pythia_slurm_body(job_request: JobRequest) -> str:
         f"MG5_EXEC={shlex.quote(mg5_exec)}",
         f"ENTRY_FILE={shlex.quote(entry_file)}",
         f"PRESERVE_RUN_DIR={str(preserve_run_dir).lower()}",
+        *shell_diagnostics_lines(job_request.job_id),
         'echo "=== MG5 TASK START @ $(date) ==="',
         'echo "WORKDIR: $WORKDIR"',
         'echo "INPUTS_DIR: $INPUTS_DIR"',
@@ -100,6 +102,7 @@ def build_mg5_pythia_slurm_body(job_request: JobRequest) -> str:
         'if [ ! -x "$MG5_EXEC" ]; then',
         '  echo "=== MG5 RUN FAILED ==="',
         '  echo "MG5 executable is not executable: $MG5_EXEC" >&2',
+        '  catena_log_missing_dependency mg5_pythia_run MG mg5_aMC "$MG5_EXEC" "" "MG5 executable is missing or not executable"',
         "  exit 1",
         "fi",
         "",
@@ -202,7 +205,9 @@ def build_mg5_pythia_slurm_body(job_request: JobRequest) -> str:
         f"if {mg5_generate_command}; then",
         '  echo "=== MG5 GENERATE SUCCESS ==="',
         "else",
+        "  exit_code=$?",
         '  echo "=== MG5 RUN FAILED ==="',
+        f"  catena_log_missing_dependency mg5_pythia_generate {shlex.quote(config.MG_ENV)} mg5-generate-dependency {shlex.quote(mg5_generate_command)} \"$exit_code\" \"MG5 generate failed; see err.log\"",
         "  exit 1",
         "fi",
         "check_mg5_errors",
@@ -235,7 +240,9 @@ def build_mg5_pythia_slurm_body(job_request: JobRequest) -> str:
         f"  if {mg5_launch_command}; then",
         '    echo "=== MG5 LAUNCH SUCCESS ==="',
         "  else",
+        "    exit_code=$?",
         '    echo "=== MG5 RUN FAILED ==="',
+        f"    catena_log_missing_dependency mg5_pythia_launch {shlex.quote(config.MG_ENV)} mg5-launch-dependency {shlex.quote(mg5_launch_command)} \"$exit_code\" \"MG5 launch failed; see err.log\"",
         "    exit 1",
         "  fi",
         "  check_mg5_errors",

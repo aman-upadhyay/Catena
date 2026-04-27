@@ -7,6 +7,7 @@ import shlex
 from catena_common import config
 from catena_common.models import JobRequest, validate_safe_relative_name
 from catena_common.paths import get_job_paths
+from catena_server.runners.diagnostics import shell_diagnostics_lines
 
 
 def shell_join(parts: list[str]) -> str:
@@ -36,13 +37,14 @@ def build_python_slurm_body(job_request: JobRequest) -> str:
         'OUTPUTS_DIR="$WORKDIR/outputs"',
         'PRE_RUN_LIST="$WORKDIR/.inputs_before.txt"',
         'POST_RUN_LIST="$WORKDIR/.inputs_after.txt"',
+        *shell_diagnostics_lines(job_request.job_id),
         'echo "=== PYTHON TASK START @ $(date) ==="',
         'echo "WORKDIR: $WORKDIR"',
         'echo "INPUTS_DIR: $INPUTS_DIR"',
         'echo "OUTPUTS_DIR: $OUTPUTS_DIR"',
         f"source {shlex.quote(config.CONDA_SH)}",
         "set +u",
-        f"conda activate {shlex.quote(config.CATENA_ENV)}",
+        f"conda activate {shlex.quote(config.PYTHON_ENV)}",
         "set -u",
         'echo "Active conda env: ${CONDA_DEFAULT_ENV:-unknown}"',
         'cd "$INPUTS_DIR"',
@@ -62,7 +64,9 @@ def build_python_slurm_body(job_request: JobRequest) -> str:
         "    fi",
         '  done < "$POST_RUN_LIST"',
         "else",
+        "  exit_code=$?",
         '  echo "=== PYTHON TASK FAILURE ==="',
+        f"  catena_log_missing_dependency python_run {shlex.quote(config.PYTHON_ENV)} python-runtime {shlex.quote(python_command)} \"$exit_code\" \"python command failed; see err.log\"",
         "  exit 1",
         "fi",
         'echo "=== PYTHON TASK END @ $(date) ==="',

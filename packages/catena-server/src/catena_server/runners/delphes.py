@@ -7,6 +7,7 @@ import shlex
 from catena_common import config
 from catena_common.models import JobRequest, validate_safe_relative_name
 from catena_common.paths import get_job_paths
+from catena_server.runners.diagnostics import shell_diagnostics_lines
 
 DEFAULT_OUT_ROOT = "output.root"
 HEPMC_HEADER_LINES = 5
@@ -108,6 +109,7 @@ def build_delphes_slurm_body(job_request: JobRequest, delphes_exe: str | None = 
         f"DELPHES_CARD={shlex.quote(delphes_card)}",
         f"HEPMC={shlex.quote(hepmc_file)}",
         f'OUT_ROOT="$OUTPUTS_DIR/{out_root}"',
+        *shell_diagnostics_lines(job_request.job_id),
         'echo "=== DELPHES TASK START @ $(date) ==="',
         'echo "WORKDIR: $WORKDIR"',
         'echo "INPUTS_DIR: $INPUTS_DIR"',
@@ -139,6 +141,7 @@ def build_delphes_slurm_body(job_request: JobRequest, delphes_exe: str | None = 
         'if [ ! -x "$DELPHES_EXE" ]; then',
         '  echo "=== DELPHES RUN FAILED ==="',
         '  echo "Delphes executable is not executable: $DELPHES_EXE" >&2',
+        '  catena_log_missing_dependency delphes_run DLPS DelphesHepMC "$DELPHES_EXE" "" "Delphes executable is missing or not executable"',
         "  exit 1",
         "fi",
         "",
@@ -148,7 +151,9 @@ def build_delphes_slurm_body(job_request: JobRequest, delphes_exe: str | None = 
         f"if {delphes_command}; then",
         '  echo "=== DELPHES RUN SUCCESS ==="',
         "else",
+        "  exit_code=$?",
         '  echo "=== DELPHES RUN FAILED ==="',
+        '  catena_log_missing_dependency delphes_run DLPS delphes-runtime "$DELPHES_EXE $DELPHES_CARD $OUT_ROOT $HEPMC" "$exit_code" "Delphes failed; see err.log"',
         "  exit 1",
         "fi",
         'echo "=== DELPHES TASK END @ $(date) ==="',

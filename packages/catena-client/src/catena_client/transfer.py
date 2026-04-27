@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from catena_common import config
+from catena_common.diagnostics import log_missing_dependency
 
 from catena_client.ssh import run_ssh_command
 
@@ -120,22 +121,73 @@ def upload_files(host: str, user: str, job_id: str, files: list[str], progress: 
         result = upload_with_rsync(host, user, job_id, files, progress=progress)
         if result.returncode == 0:
             return
+        log_missing_dependency(
+            scope="client",
+            operation_type="client_upload",
+            job_id=job_id,
+            missing="rsync-or-remote-rsync",
+            category="transfer_utility",
+            command=result.args,
+            exit_code=result.returncode,
+            stderr=result.stderr.strip() or None,
+            message="rsync upload failed; trying scp fallback if available",
+        )
         if shutil.which("scp"):
             fallback = upload_with_scp(host, user, job_id, files, progress=progress)
             if fallback.returncode == 0:
                 return
+            log_missing_dependency(
+                scope="client",
+                operation_type="client_upload",
+                job_id=job_id,
+                missing="scp",
+                category="transfer_utility",
+                command=fallback.args,
+                exit_code=fallback.returncode,
+                stderr=fallback.stderr.strip() or None,
+                message="scp upload fallback failed",
+            )
             stderr = fallback.stderr.strip() or result.stderr.strip() or "scp upload failed"
             raise TransferError(stderr)
         stderr = result.stderr.strip() or "rsync upload failed"
         raise TransferError(stderr)
 
     if shutil.which("scp"):
+        log_missing_dependency(
+            scope="client",
+            operation_type="client_upload",
+            job_id=job_id,
+            missing="rsync",
+            category="bash_utility",
+            command="rsync -av -e ssh ...",
+            message="rsync is unavailable locally; using scp fallback",
+        )
         result = upload_with_scp(host, user, job_id, files, progress=progress)
         if result.returncode == 0:
             return
+        log_missing_dependency(
+            scope="client",
+            operation_type="client_upload",
+            job_id=job_id,
+            missing="scp",
+            category="transfer_utility",
+            command=result.args,
+            exit_code=result.returncode,
+            stderr=result.stderr.strip() or None,
+            message="scp upload failed",
+        )
         stderr = result.stderr.strip() or "scp upload failed"
         raise TransferError(stderr)
 
+    log_missing_dependency(
+        scope="client",
+        operation_type="client_upload",
+        job_id=job_id,
+        missing="rsync,scp",
+        category="bash_utility",
+        command="rsync -av -e ssh ... || scp ...",
+        message="neither rsync nor scp is available locally",
+    )
     raise TransferError("neither rsync nor scp is available locally")
 
 
@@ -180,20 +232,66 @@ def fetch_file(host: str, user: str, remote_path: str, local_path: Path, progres
         result = fetch_with_rsync(host, user, remote_path, local_path, progress=progress)
         if result.returncode == 0:
             return
+        log_missing_dependency(
+            scope="client",
+            operation_type="client_fetch",
+            missing="rsync-or-remote-rsync",
+            category="transfer_utility",
+            command=result.args,
+            exit_code=result.returncode,
+            stderr=result.stderr.strip() or None,
+            message="rsync fetch failed; trying scp fallback if available",
+        )
         if shutil.which("scp"):
             fallback = fetch_with_scp(host, user, remote_path, local_path, progress=progress)
             if fallback.returncode == 0:
                 return
+            log_missing_dependency(
+                scope="client",
+                operation_type="client_fetch",
+                missing="scp",
+                category="transfer_utility",
+                command=fallback.args,
+                exit_code=fallback.returncode,
+                stderr=fallback.stderr.strip() or None,
+                message="scp fetch fallback failed",
+            )
             stderr = fallback.stderr.strip() or result.stderr.strip() or "scp fetch failed"
             raise TransferError(stderr)
         stderr = result.stderr.strip() or "rsync fetch failed"
         raise TransferError(stderr)
 
     if shutil.which("scp"):
+        log_missing_dependency(
+            scope="client",
+            operation_type="client_fetch",
+            missing="rsync",
+            category="bash_utility",
+            command="rsync -av -e ssh ...",
+            message="rsync is unavailable locally; using scp fallback",
+        )
         result = fetch_with_scp(host, user, remote_path, local_path, progress=progress)
         if result.returncode == 0:
             return
+        log_missing_dependency(
+            scope="client",
+            operation_type="client_fetch",
+            missing="scp",
+            category="transfer_utility",
+            command=result.args,
+            exit_code=result.returncode,
+            stderr=result.stderr.strip() or None,
+            message="scp fetch failed",
+        )
         stderr = result.stderr.strip() or "scp fetch failed"
         raise TransferError(stderr)
 
+    log_missing_dependency(
+        scope="client",
+        operation_type="client_fetch",
+        missing="rsync,scp",
+        category="bash_utility",
+        command="rsync -av -e ssh ... || scp ...",
+        message="neither rsync nor scp is available locally",
+    )
     raise TransferError("neither rsync nor scp is available locally")

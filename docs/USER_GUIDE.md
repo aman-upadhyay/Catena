@@ -78,6 +78,7 @@ Remote user:      au152
 Remote server:    /home/au152/Software/miniconda3/envs/Catena/bin/catena-server
 Conda source:     /home/au152/Software/miniconda3/etc/profile.d/conda.sh
 Catena env:       Catena
+Python job env:   HEP_workflow
 MG env:           MG
 DLPS env:         DLPS
 LHAPDF data path: /home/au152/Software/miniconda3/envs/DLPS/share/LHAPDF

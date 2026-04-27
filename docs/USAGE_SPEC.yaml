@@ -31,6 +31,7 @@ runtime_defaults:
     user: "au152"
   envs:
     catena: "Catena"
+    python: "HEP_workflow"
     mg: "MG"
     dlps: "DLPS"
     srpa: "SRPA"
@@ -292,10 +293,10 @@ management_payloads:
       message: "string"
 task_types:
   python:
-    purpose: "run a Python entry script in the Catena conda environment"
+    purpose: "run a Python entry script in the HEP_workflow conda environment"
     extra: {}
     behavior:
-      - "activate Catena env"
+      - "activate HEP_workflow env"
       - "run python {entry_file} {cli_args...}"
       - "copy new files from inputs/ into outputs/"
   cpp:

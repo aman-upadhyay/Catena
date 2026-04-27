@@ -13,6 +13,7 @@ from pathlib import Path
 import typer
 from pydantic import ValidationError
 
+from catena_common.diagnostics import log_missing_dependency
 from catena_common.jsonio import dumps_json, load_json_file
 from catena_common.models import JobRequest, JobState, JobStatus
 from catena_common.paths import base_job_path, base_stage_path, get_job_paths
@@ -79,12 +80,24 @@ def load_request(path: str) -> JobRequest:
 def submit_slurm_script(script_path: Path) -> tuple[str | None, str | None, int | None]:
     """Submit a rendered SLURM script and return the job id or an error."""
 
-    result = subprocess.run(
-        ["sbatch", "--parsable", str(script_path)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    command = ["sbatch", "--parsable", str(script_path)]
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        log_missing_dependency(
+            scope="server",
+            operation_type="server_submit",
+            missing="sbatch",
+            category="bash_utility",
+            command=command,
+            stderr=str(exc),
+        )
+        raise
     if result.returncode != 0:
         return None, result.stderr.strip() or "sbatch failed", result.returncode
 
@@ -98,12 +111,24 @@ def submit_slurm_script(script_path: Path) -> tuple[str | None, str | None, int 
 def query_squeue(slurm_job_id: str) -> tuple[str | None, str | None]:
     """Query the current SLURM state from squeue."""
 
-    result = subprocess.run(
-        ["squeue", "--noheader", "--format=%T", "--jobs", slurm_job_id],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    command = ["squeue", "--noheader", "--format=%T", "--jobs", slurm_job_id]
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        log_missing_dependency(
+            scope="server",
+            operation_type="server_status",
+            missing="squeue",
+            category="bash_utility",
+            command=command,
+            stderr=str(exc),
+        )
+        raise
     if result.returncode != 0:
         return None, result.stderr.strip() or "squeue failed"
 
@@ -125,12 +150,24 @@ def parse_slurm_exit_code(value: str) -> int | None:
 def query_sacct(slurm_job_id: str) -> tuple[SlurmStateInfo | None, str | None]:
     """Query historical SLURM state from sacct."""
 
-    result = subprocess.run(
-        ["sacct", "--noheader", "--parsable2", "--format=State,ExitCode", "--jobs", slurm_job_id],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    command = ["sacct", "--noheader", "--parsable2", "--format=State,ExitCode", "--jobs", slurm_job_id]
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        log_missing_dependency(
+            scope="server",
+            operation_type="server_status",
+            missing="sacct",
+            category="bash_utility",
+            command=command,
+            stderr=str(exc),
+        )
+        raise
     if result.returncode != 0:
         return None, result.stderr.strip() or "sacct failed"
 
@@ -895,12 +932,25 @@ def delete(
         raise typer.Exit(code=1)
 
     if state_record and state_record.state in DELETE_ACTIVE_STATES and force_cancel and state_record.slurm_job_id:
-        cancel_result = subprocess.run(
-            ["scancel", state_record.slurm_job_id],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        command = ["scancel", state_record.slurm_job_id]
+        try:
+            cancel_result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except FileNotFoundError as exc:
+            log_missing_dependency(
+                scope="server",
+                operation_type="server_delete",
+                job_id=job_id,
+                missing="scancel",
+                category="bash_utility",
+                command=command,
+                stderr=str(exc),
+            )
+            raise
         if cancel_result.returncode != 0:
             cancel_error = cancel_result.stderr.strip() or "scancel failed"
             _emit_delete_result(

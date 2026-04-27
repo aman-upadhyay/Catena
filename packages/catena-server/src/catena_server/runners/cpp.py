@@ -7,6 +7,7 @@ import shlex
 from catena_common import config
 from catena_common.models import JobRequest, validate_safe_relative_name
 from catena_common.paths import get_job_paths
+from catena_server.runners.diagnostics import shell_diagnostics_lines
 
 DEFAULT_CPP_EXE = "job_exe"
 
@@ -59,6 +60,7 @@ def build_cpp_slurm_body(job_request: JobRequest) -> str:
         'OUTPUTS_DIR="$WORKDIR/outputs"',
         'PRE_RUN_LIST="$WORKDIR/.inputs_before.txt"',
         'POST_RUN_LIST="$WORKDIR/.inputs_after.txt"',
+        *shell_diagnostics_lines(job_request.job_id),
         'echo "=== CPP TASK START @ $(date) ==="',
         'echo "WORKDIR: $WORKDIR"',
         'echo "INPUTS_DIR: $INPUTS_DIR"',
@@ -80,7 +82,9 @@ def build_cpp_slurm_body(job_request: JobRequest) -> str:
         f"if {compile_command}; then",
         '  echo "=== CPP COMPILE SUCCESS ==="',
         "else",
+        "  exit_code=$?",
         '  echo "=== CPP COMPILE FAILED ==="',
+        f"  catena_log_missing_dependency cpp_build {shlex.quote(config.CATENA_ENV)} cpp-build-dependency {shlex.quote(compile_command)} \"$exit_code\" \"compile failed; see err.log\"",
         "  exit 1",
         "fi",
         "",
@@ -88,7 +92,9 @@ def build_cpp_slurm_body(job_request: JobRequest) -> str:
         f"if {run_command}; then",
         '  echo "=== CPP RUN SUCCESS ==="',
         "else",
+        "  exit_code=$?",
         '  echo "=== CPP RUN FAILED ==="',
+        f"  catena_log_missing_dependency cpp_run {shlex.quote(config.CATENA_ENV)} cpp-runtime-dependency {shlex.quote(run_command)} \"$exit_code\" \"compiled executable failed; see err.log\"",
         "  exit 1",
         "fi",
         "",
